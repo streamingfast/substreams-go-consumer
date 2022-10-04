@@ -12,7 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type StateFetcher func() (cursor string, block bstream.BlockRef, backprocessCompleted bool)
+type StateFetcher func() (cursor string, block bstream.BlockRef, backprocessCompleted bool, headBlockReached bool)
 
 type StateStore struct {
 	*shutter.Shutter
@@ -52,6 +52,8 @@ func (s *StateStore) Read() (cursor string, block bstream.BlockRef, err error) {
 }
 
 func (s *StateStore) Start(each time.Duration) {
+	zlog.Info("starting state persistent storage service", zap.Duration("runs_each", each))
+
 	if s.IsTerminating() || s.IsTerminated() {
 		panic("already shutdown, refusing to start again")
 	}
@@ -71,7 +73,7 @@ func (s *StateStore) Start(each time.Duration) {
 			select {
 			case <-ticker.C:
 				zlog.Debug("saving cursor to output path", zap.String("output_path", s.outputPath))
-				cursor, block, backprocessCompleted := s.fetcher()
+				cursor, block, backprocessCompleted, headBlockReached := s.fetcher()
 
 				s.state.Cursor = cursor
 				s.state.Block.ID = block.ID()
@@ -81,6 +83,11 @@ func (s *StateStore) Start(each time.Duration) {
 				if backprocessCompleted && s.state.BackprocessingCompletedAt.IsZero() {
 					s.state.BackprocessingCompletedAt = s.state.LastSyncedAt
 					s.state.BackprocessingDuration = s.state.BackprocessingCompletedAt.Sub(s.state.StartedAt)
+				}
+
+				if headBlockReached && s.state.HeadBlockReachedAt.IsZero() {
+					s.state.HeadBlockReachedAt = s.state.LastSyncedAt
+					s.state.HeadBlockReachedDuration = s.state.HeadBlockReachedAt.Sub(s.state.StartedAt)
 				}
 
 				content, err := yaml.Marshal(s.state)
@@ -108,6 +115,8 @@ type syncState struct {
 	LastSyncedAt              time.Time     `yaml:"last_synced_at,omitempty"`
 	BackprocessingCompletedAt time.Time     `yaml:"backprocessing_completed_at,omitempty"`
 	BackprocessingDuration    time.Duration `ymal:"backprocessing_duration,omitempty"`
+	HeadBlockReachedAt        time.Time     `ymal:"head_block_reached_at,omitempty"`
+	HeadBlockReachedDuration  time.Duration `yaml:"head_block_reached_duration,omitempty"`
 }
 
 type blockState struct {

@@ -117,14 +117,22 @@ func run(cmd *cobra.Command, args []string) error {
 	module, err := graph.Module(moduleName)
 	cli.NoError(err, "Unable to get module")
 
+	moduleOutput := (*ModuleOutput)(module.Output)
+
+	if backprocess && module.GetKindMap() != nil {
+		return fmt.Errorf("module %q is of type 'Mapper', it's invalid to enforce backprocessing (-b) of a mapper module, only store module can be backprocessed", module.Name)
+	}
+
 	startBlock, stopBlock, err := readBlockRange(module, blockRange)
 	cli.NoError(err, "Unable to read block range")
 
 	zlog.Info("resolved block range", zap.Int64("start_block", startBlock), zap.Uint64("stop_block", stopBlock))
 
+	apiToken := readAPIToken()
+
 	substreamsClientConfig := client.NewSubstreamsClientConfig(
 		endpoint,
-		readAPIToken(),
+		apiToken,
 		viper.GetBool("insecure"),
 		viper.GetBool("plaintext"),
 	)
@@ -133,34 +141,59 @@ func run(cmd *cobra.Command, args []string) error {
 	cli.NoError(err, "Unable to create substreams client")
 	defer connClose()
 
-	stats := NewStats(stopBlock)
-	stats.Start(viper.GetDuration("frequency"))
+	firehoseClient, firehoseClose, err := NewFirehoseClient(&FirehoseClientConfig{Endpoint: endpoint, JWT: apiToken, Insecure: viper.GetBool("insecure"), PlainText: viper.GetBool("plaintext")})
+	cli.NoError(err, "Unable to create firehose client")
+	defer firehoseClose()
 
+	headFetcher := NewHeadFetcher(firehoseClient)
+	app.OnTerminating(func(_ error) { headFetcher.Close() })
+	headFetcher.OnTerminated(func(err error) { app.Shutdown(err) })
+
+	stats := NewStats(stopBlock, headFetcher)
 	app.OnTerminating(func(_ error) { stats.Close() })
 	stats.OnTerminated(func(err error) { app.Shutdown(err) })
 
 	activeCursor := ""
 	activeBlock := bstream.BlockRefEmpty
 	backprocessingCompleted := false
-	stateStore := NewStateStore(stateStorePath, func() (string, bstream.BlockRef, bool) { return activeCursor, activeBlock, backprocessingCompleted })
+	headBlockReached := false
+
+	stateStore := NewStateStore(stateStorePath, func() (string, bstream.BlockRef, bool, bool) {
+		return activeCursor, activeBlock, backprocessingCompleted, headBlockReached
+	})
+	app.OnTerminating(func(_ error) { stateStore.Close() })
+	stateStore.OnTerminated(func(err error) { app.Shutdown(err) })
 
 	if !cleanState {
 		activeCursor, activeBlock, err = stateStore.Read()
 		cli.NoError(err, "Unable to read state store")
+	} else {
+		if backprocess {
+			zlog.Info("backprocessing enforced, retrieving head block from endpoint")
+			err := headFetcher.Init(ctx)
+			cli.NoError(err, "Unable to retrieved head block")
+
+			headBlock, found := headFetcher.Current()
+			cli.Ensure(found, "Head block should be set at that point")
+
+			zlog.Info("overidding start block since backprocessing is enforced", zap.Int64("actual_start_block", startBlock), zap.Uint64("new_start_block", headBlock.Num()))
+			startBlock = int64(headBlock.Num())
+		}
 	}
 
-	app.OnTerminating(func(_ error) { stateStore.Close() })
-	stateStore.OnTerminated(func(err error) { app.Shutdown(err) })
-
-	stateStore.Start(5 * time.Second)
-
-	recordEntityChange := module.Output.Type == "proto:network.types.v1.EntitiesChanges"
+	recordEntityChange := moduleOutput.TypeName() == "proto:network.types.v1.EntitiesChanges"
 	zlog.Info("client configured",
-		zap.String("module_output", module.Output.Type),
+		zap.Stringer("module_output", moduleOutput),
 		zap.Bool("record_entity_change", recordEntityChange),
+		zap.Int64("start_block", startBlock),
+		zap.Uint64("stop_block", stopBlock),
 		zap.Stringer("active_block", activeBlock),
 		zap.String("active_cursor", activeCursor),
 	)
+
+	stats.Start(viper.GetDuration("frequency"))
+	headFetcher.Start(5 * time.Minute)
+	stateStore.Start(5 * time.Second)
 
 	for {
 		req := &pbsubstreams.Request{
@@ -244,7 +277,13 @@ func run(cmd *cobra.Command, args []string) error {
 
 					BackprocessingCompletion.SetUint64(1)
 					HeadBlockNumber.SetUint64(data.Clock.Number)
+					HeadBlockTime.SetBlockTime(data.Clock.Timestamp.AsTime())
 					DataMessageCount.Inc()
+
+					chainHeadBlock, found := headFetcher.Current()
+					if found && data.Clock.Number >= chainHeadBlock.Num() {
+						headBlockReached = true
+					}
 
 					if data.Step == pbsubstreams.ForkStep_STEP_NEW {
 						StepNewCount.Inc()
@@ -258,7 +297,7 @@ func run(cmd *cobra.Command, args []string) error {
 							OutputMapperSizeBytes.AddInt(proto.Size(output), output.Name)
 
 							if recordEntityChange && output.Name == "graph_out" {
-								if outputType, found := moduleOutputType(output, graph); found && outputType == "proto:network.types.v1.EntitiesChanges" {
+								if output, found := moduleOutputType(output, graph); found && output.TypeName() == "proto:network.types.v1.EntitiesChanges" {
 									// FIXME: Do we want to actually decode the type to get out the amount of data extracted?
 								}
 							}
@@ -297,15 +336,15 @@ func run(cmd *cobra.Command, args []string) error {
 	return app.Err()
 }
 
-func moduleOutputType(output *pbsubstreams.ModuleOutput, graph *manifest.ModuleGraph) (outputType string, found bool) {
+func moduleOutputType(output *pbsubstreams.ModuleOutput, graph *manifest.ModuleGraph) (moduleOutput *ModuleOutput, found bool) {
 	module, err := graph.Module(output.Name)
 	if err != nil {
 		// There is only one kind of error in the `Module` implementation, when the module is not found, hopefully it stays
 		// like that forever!
-		return "", false
+		return nil, false
 	}
 
-	return module.Output.Type, true
+	return (*ModuleOutput)(module.Output), module.Output != nil
 }
 
 func readAPIToken() string {

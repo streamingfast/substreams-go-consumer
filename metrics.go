@@ -16,14 +16,18 @@ import (
 var metrics = dmetrics.NewSet()
 
 var HeadBlockNumber = metrics.NewHeadBlockNumber("substreams-consumer")
+var HeadBlockTime = metrics.NewHeadTimeDrift("substreams-consumer")
 
-var SubstreamsErrorCount = metrics.NewCounter("substreams_error", "The amount of time we hit an error and we had to restart the connection loop")
+var FirehoseErrorCount = metrics.NewCounter("firehose_error", "The error count we encountered when interacting with Firehose for which we had to restart the connection loop")
+var SubstreamsErrorCount = metrics.NewCounter("substreams_error", "The error count we encountered when interacting with Substreams for which we had to restart the connection loop")
 
-var BackprocessingCompletion = metrics.NewGauge("backprocessing_completion", "Determines if backprocessing is completed, which is if we receive a first data message")
 var MessageSizeBytes = metrics.NewCounter("message_size_bytes", "The number of total bytes of message received from the Substreams backend")
 var UnknownMessageCount = metrics.NewCounter("unknown_message", "The number of data message received")
 var DataMessageCount = metrics.NewCounter("data_message", "The number of data message received")
 var ProgressMessageCount = metrics.NewCounter("progress_message", "The number of progress message received")
+
+var BackprocessingCompletion = metrics.NewGauge("backprocessing_completion", "Determines if backprocessing is completed, which is if we receive a first data message")
+var HeadBlockReached = metrics.NewGauge("head_block_reached", "Determines if head block was reached at some point, once set it will not change anymore however on restart, there might be a delay before it's set back to 1")
 
 var StepNewCount = metrics.NewCounter("step_new_count", "How many NEW step message we received")
 var StepUndoCount = metrics.NewCounter("step_undo_count", "How many UNDO step message we received")
