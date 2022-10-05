@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/streamingfast/bstream"
 	pbtransform "github.com/streamingfast/firehose-ethereum/types/pb/sf/ethereum/transform/v1"
 	pbeth "github.com/streamingfast/firehose-ethereum/types/pb/sf/ethereum/type/v2"
@@ -31,7 +31,7 @@ func NewHeadFetcher(client pbfirehose.StreamClient) *HeadFetcher {
 }
 
 func (s *HeadFetcher) Init(ctx context.Context) error {
-	headBlock, err := s.FetchHeadBlockWithRetries(ctx)
+	headBlock, err := s.FetchHeadBlock(ctx)
 	if err != nil {
 		return err
 	}
@@ -66,7 +66,7 @@ func (s *HeadFetcher) Start(refreshEach time.Duration) {
 		for {
 			select {
 			case <-ticker.C:
-				headBlock, err := s.FetchHeadBlockWithRetries(ctx)
+				headBlock, err := s.FetchHeadBlock(ctx)
 				if err != nil {
 					zlog.Error("unable to fetch head block with retries, head block will be nil until then")
 					continue
@@ -80,62 +80,59 @@ func (s *HeadFetcher) Start(refreshEach time.Duration) {
 	}()
 }
 
-func (s *HeadFetcher) FetchHeadBlockWithRetries(ctx context.Context) (bstream.BlockRef, error) {
-	transform, err := anypb.New(&pbtransform.LightBlock{})
-	if err != nil {
-		return bstream.BlockRefEmpty, fmt.Errorf("light block transform to any: should never happen, message used here is always transformable to *anypb.Any")
+// FetchHeadBlock retrieves the head block from a Firehose endpoint and handles retry using an exponential backoff
+// algorithm that is going to stop when current retry delay >60s which takes around 120s.
+func (s *HeadFetcher) FetchHeadBlock(ctx context.Context) (ref bstream.BlockRef, err error) {
+	operation := func() (opErr error) {
+		ref, opErr = s.fetchHeadBlock(ctx)
+		return opErr
 	}
 
-	maxTimeCtx, cancelTimeout := context.WithTimeout(ctx, 1*time.Minute)
-	defer cancelTimeout()
+	err = backoff.RetryNotify(
+		operation,
+		backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 12), ctx),
+		func(err error, delay time.Duration) {
+			zlog.Error("retrying after error with delay before retry", zap.Duration("delay", delay), zap.Error(err))
+		},
+	)
 
-	fetchCtx, cancelFetch := context.WithCancel(maxTimeCtx)
+	return ref, err
+}
+
+func (s *HeadFetcher) fetchHeadBlock(ctx context.Context) (ref bstream.BlockRef, err error) {
+	transform, err := anypb.New(&pbtransform.LightBlock{})
+	if err != nil {
+		return ref, fmt.Errorf("light block transform to any: should never happen, message used here is always transformable to *anypb.Any")
+	}
+
+	fetchCtx, cancelFetch := context.WithCancel(ctx)
 	defer cancelFetch()
 
-	retryWaitTime := time.Duration(0)
-	var lastErr error
+	stream, err := s.client.Blocks(fetchCtx, &pbfirehose.Request{
+		StartBlockNum:   -1,
+		FinalBlocksOnly: false,
+		Cursor:          "",
+		Transforms:      []*anypb.Any{transform},
+	})
+	if err != nil {
+		return ref, fmt.Errorf("firehose stream blocks: %w", err)
+	}
 
 	for {
-		if retryWaitTime != 0 {
-			if errors.Is(lastErr, context.Canceled) || errors.Is(lastErr, context.DeadlineExceeded) {
-				return bstream.BlockRefEmpty, fetchCtx.Err()
-			}
-
-			FirehoseErrorCount.Inc()
-			zlog.Error("retrying after error with delay before retry", zap.Duration("delay", retryWaitTime), zap.Error(err))
-			time.Sleep(retryWaitTime)
-		} else {
-			retryWaitTime = 5 * time.Second
-		}
-
-		stream, err := s.client.Blocks(fetchCtx, &pbfirehose.Request{
-			StartBlockNum:   -1,
-			FinalBlocksOnly: false,
-			Cursor:          "",
-			Transforms:      []*anypb.Any{transform},
-		})
+		response, err := stream.Recv()
 		if err != nil {
-			lastErr = fmt.Errorf("firehose stream blocks: %w", err)
-			continue
+			return ref, fmt.Errorf("firehose receive block: %w", err)
 		}
 
-		for {
-			response, err := stream.Recv()
-			if err != nil {
-				lastErr = fmt.Errorf("firehose receive block: %w", err)
-				break
+		if response.Step == pbfirehose.ForkStep_STEP_NEW {
+			// FIXME: Works only on Ethereum models!
+			var block pbeth.Block
+			if err := response.Block.UnmarshalTo(&block); err != nil {
+				// No retry there is something fishy so we return right away
+				return bstream.BlockRefEmpty, backoff.Permanent(fmt.Errorf("unable to read Ethereum block: %w", err))
 			}
 
-			if response.Step == pbfirehose.ForkStep_STEP_NEW {
-				// FIXME: Works only on Ethereum models!
-				var block pbeth.Block
-				if err := response.Block.UnmarshalTo(&block); err != nil {
-					// No retry there is something fishy so we return right away
-					return bstream.BlockRefEmpty, fmt.Errorf("unable to read Ethereum block: %w", err)
-				}
-
-				return bstream.NewBlockRef(hex.EncodeToString(block.Hash), block.Number), err
-			}
+			return bstream.NewBlockRef(hex.EncodeToString(block.Hash), block.Number), nil
 		}
 	}
 }

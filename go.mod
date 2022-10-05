@@ -37,6 +37,7 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blendle/zapdriver v1.3.1 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.1.3 // indirect
+	github.com/cenkalti/backoff/v4 v4.1.3 // indirect
 	github.com/census-instrumentation/opencensus-proto v0.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
 	github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e // indirect

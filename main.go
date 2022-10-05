@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/golang/protobuf/proto"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -195,7 +196,12 @@ func run(cmd *cobra.Command, args []string) error {
 	headFetcher.Start(5 * time.Minute)
 	stateStore.Start(5 * time.Second)
 
+	//
+	backOff := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 12), ctx)
+
 	for {
+		var lastErr error
+
 		req := &pbsubstreams.Request{
 			StartBlockNum: startBlock,
 			StopBlockNum:  stopBlock,
@@ -209,117 +215,118 @@ func run(cmd *cobra.Command, args []string) error {
 		cli.NoError(err, "Invalid built Substreams request")
 
 		zlog.Info("connecting...")
-
 		cli, err := ssClient.Blocks(ctx, req, callOpts...)
+
 		if err != nil {
-			return fmt.Errorf("call sf.substreams.v1.Stream/Blocks: %w", err)
-		}
+			lastErr = fmt.Errorf("call sf.substreams.v1.Stream/Blocks: %w", err)
+		} else {
+			zlog.Info("connected")
+			checkFirstBlock := true
 
-		zlog.Info("connected")
-		checkFirstBlock := true
+			for {
+				resp, err := cli.Recv()
+				if err != nil {
+					if errors.Is(err, context.Canceled) {
+						zlog.Debug("context cancelled, terminating work")
+						break
+					}
 
-		for {
-			resp, err := cli.Recv()
-			if err != nil {
-				if errors.Is(err, context.Canceled) {
-					zlog.Debug("context cancelled, terminating work")
+					if err == io.EOF {
+						zlog.Info("completed")
+						return nil
+					}
+
+					lastErr = err
 					break
 				}
 
-				if err == io.EOF {
-					zlog.Info("completed")
-					return nil
-				}
+				if resp != nil {
+					backOff.Reset()
 
-				SubstreamsErrorCount.Inc()
-				zlog.Error("substreams encountered an error", zap.Error(err))
-				break
-			}
+					MessageSizeBytes.AddInt(proto.Size(resp))
 
-			if resp != nil {
-				MessageSizeBytes.AddInt(proto.Size(resp))
+					if progress := resp.GetProgress(); progress != nil {
+						ProgressMessageCount.Inc()
 
-				if progress := resp.GetProgress(); progress != nil {
-					ProgressMessageCount.Inc()
-
-					if tracer.Enabled() {
-						zlog.Debug("progress message received", zap.Reflect("progress", progress))
-					}
-
-					continue
-				}
-
-				if data := resp.GetData(); data != nil {
-					block := bstream.NewBlockRef(data.Clock.Id, data.Clock.Number)
-					if checkFirstBlock {
-						if !bstream.EqualsBlockRefs(activeBlock, bstream.BlockRefEmpty) {
-							zlog.Info("checking first received block",
-								zap.Stringer("block_at_cursor", activeBlock),
-								zap.Stringer("first_block", block),
-							)
-
-							// Correct check would be using parent/child relationship, if the clock had
-							// information about the parent block right there, we could validate that active block
-							// is actually the parent of first received block. For now, let's ensure we have a following
-							// block (will not work on network's that can skip block's num like NEAR or Solana).
-							if block.Num()-1 != activeBlock.Num() {
-								app.Shutdown(fmt.Errorf("block continuity on first block after restarting from cursor does not follow"))
-								break
-							}
+						if tracer.Enabled() {
+							zlog.Debug("progress message received", zap.Reflect("progress", progress))
 						}
 
-						checkFirstBlock = false
+						continue
 					}
 
-					if tracer.Enabled() {
-						zlog.Debug("data message received", zap.Reflect("data", data))
-					}
+					if data := resp.GetData(); data != nil {
+						block := bstream.NewBlockRef(data.Clock.Id, data.Clock.Number)
+						if checkFirstBlock {
+							if !bstream.EqualsBlockRefs(activeBlock, bstream.BlockRefEmpty) {
+								zlog.Info("checking first received block",
+									zap.Stringer("block_at_cursor", activeBlock),
+									zap.Stringer("first_block", block),
+								)
 
-					BackprocessingCompletion.SetUint64(1)
-					HeadBlockNumber.SetUint64(data.Clock.Number)
-					HeadBlockTime.SetBlockTime(data.Clock.Timestamp.AsTime())
-					DataMessageCount.Inc()
-
-					chainHeadBlock, found := headFetcher.Current()
-					if found && data.Clock.Number >= chainHeadBlock.Num() {
-						headBlockReached = true
-					}
-
-					if data.Step == pbsubstreams.ForkStep_STEP_NEW {
-						StepNewCount.Inc()
-					} else if data.Step == pbsubstreams.ForkStep_STEP_UNDO {
-						StepUndoCount.Inc()
-					}
-
-					for _, output := range data.Outputs {
-						if data := output.GetData(); data != nil {
-							OutputMapperCount.Inc(output.Name)
-							OutputMapperSizeBytes.AddInt(proto.Size(output), output.Name)
-
-							if recordEntityChange && output.Name == "graph_out" {
-								if output, found := moduleOutputType(output, graph); found && output.TypeName() == "proto:network.types.v1.EntitiesChanges" {
-									// FIXME: Do we want to actually decode the type to get out the amount of data extracted?
+								// Correct check would be using parent/child relationship, if the clock had
+								// information about the parent block right there, we could validate that active block
+								// is actually the parent of first received block. For now, let's ensure we have a following
+								// block (will not work on network's that can skip block's num like NEAR or Solana).
+								if block.Num()-1 != activeBlock.Num() {
+									app.Shutdown(fmt.Errorf("block continuity on first block after restarting from cursor does not follow"))
+									break
 								}
 							}
 
-							continue
+							checkFirstBlock = false
 						}
 
-						if storeDeltas := output.GetStoreDeltas(); storeDeltas != nil {
-							OutputStoreDeltasCount.AddInt(len(storeDeltas.Deltas), output.Name)
-							OutputStoreDeltaSizeBytes.AddInt(proto.Size(output), output.Name)
+						if tracer.Enabled() {
+							zlog.Debug("data message received", zap.Reflect("data", data))
 						}
+
+						BackprocessingCompletion.SetUint64(1)
+						HeadBlockNumber.SetUint64(data.Clock.Number)
+						HeadBlockTime.SetBlockTime(data.Clock.Timestamp.AsTime())
+						DataMessageCount.Inc()
+
+						chainHeadBlock, found := headFetcher.Current()
+						if found && data.Clock.Number >= chainHeadBlock.Num() {
+							headBlockReached = true
+						}
+
+						if data.Step == pbsubstreams.ForkStep_STEP_NEW {
+							StepNewCount.Inc()
+						} else if data.Step == pbsubstreams.ForkStep_STEP_UNDO {
+							StepUndoCount.Inc()
+						}
+
+						for _, output := range data.Outputs {
+							if data := output.GetData(); data != nil {
+								OutputMapperCount.Inc(output.Name)
+								OutputMapperSizeBytes.AddInt(proto.Size(output), output.Name)
+
+								if recordEntityChange && output.Name == "graph_out" {
+									if output, found := moduleOutputType(output, graph); found && output.TypeName() == "proto:network.types.v1.EntitiesChanges" {
+										// FIXME: Do we want to actually decode the type to get out the amount of data extracted?
+									}
+								}
+
+								continue
+							}
+
+							if storeDeltas := output.GetStoreDeltas(); storeDeltas != nil {
+								OutputStoreDeltasCount.AddInt(len(storeDeltas.Deltas), output.Name)
+								OutputStoreDeltaSizeBytes.AddInt(proto.Size(output), output.Name)
+							}
+						}
+
+						stats.lastBlock = block
+
+						activeCursor = data.Cursor
+						activeBlock = block
+						backprocessingCompleted = true
+						continue
 					}
 
-					stats.lastBlock = block
-
-					activeCursor = data.Cursor
-					activeBlock = block
-					backprocessingCompleted = true
-					continue
+					UnknownMessageCount.Inc()
 				}
-
-				UnknownMessageCount.Inc()
 			}
 		}
 
@@ -327,9 +334,19 @@ func run(cmd *cobra.Command, args []string) error {
 			break
 		}
 
-		sleepFor := 5 * time.Second
-		zlog.Info("sleeping before re-connecting", zap.Duration("sleep", sleepFor))
-		time.Sleep(sleepFor)
+		if lastErr != nil {
+			SubstreamsErrorCount.Inc()
+			zlog.Error("substreams encountered an error", zap.Error(lastErr))
+
+			sleepFor := backOff.NextBackOff()
+			if sleepFor == backoff.Stop {
+				zlog.Info("backoff requested to stop retries")
+				return lastErr
+			}
+
+			zlog.Info("sleeping before re-connecting", zap.Duration("sleep", sleepFor))
+			time.Sleep(sleepFor)
+		}
 	}
 
 	<-app.Terminated()
