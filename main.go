@@ -196,8 +196,8 @@ func run(cmd *cobra.Command, args []string) error {
 	headFetcher.Start(5 * time.Minute)
 	stateStore.Start(5 * time.Second)
 
-	//
-	backOff := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 12), ctx)
+	// We will wait at max approximatively 5m before diying
+	backOff := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 15), ctx)
 
 	for {
 		var lastErr error
@@ -286,11 +286,6 @@ func run(cmd *cobra.Command, args []string) error {
 						HeadBlockTime.SetBlockTime(data.Clock.Timestamp.AsTime())
 						DataMessageCount.Inc()
 
-						chainHeadBlock, found := headFetcher.Current()
-						if found && data.Clock.Number >= chainHeadBlock.Num() {
-							headBlockReached = true
-						}
-
 						if data.Step == pbsubstreams.ForkStep_STEP_NEW {
 							StepNewCount.Inc()
 						} else if data.Step == pbsubstreams.ForkStep_STEP_UNDO {
@@ -322,6 +317,12 @@ func run(cmd *cobra.Command, args []string) error {
 						activeCursor = data.Cursor
 						activeBlock = block
 						backprocessingCompleted = true
+
+						chainHeadBlock, found := headFetcher.Current()
+						if found && data.Clock.Number >= chainHeadBlock.Num() {
+							headBlockReached = true
+						}
+
 						continue
 					}
 
