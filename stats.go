@@ -19,8 +19,8 @@ type Stats struct {
 	backprocessingCompletion *ValueFromGauge
 	headBlockReached         *ValueFromGauge
 
-	dataMsgRate     *RateFromCounter
-	progressMsgRate *RateFromCounter
+	dataMsgRate     *RateFromCounterVec
+	progressMsgRate *RateFromCounterVec
 }
 
 func NewStats(stopBlock uint64, headFetcher *HeadFetcher) *Stats {
@@ -33,8 +33,8 @@ func NewStats(stopBlock uint64, headFetcher *HeadFetcher) *Stats {
 		backprocessingCompletion: NewValueFromGauge(BackprocessingCompletion, "completion"),
 		headBlockReached:         NewValueFromGauge(HeadBlockReached, "reached"),
 
-		dataMsgRate:     NewPerSecondRateFromCounter(DataMessageCount, "msg"),
-		progressMsgRate: NewPerSecondRateFromCounter(ProgressMessageCount, "msg"),
+		dataMsgRate:     NewPerSecondRateFromCounterVec(DataMessageCount, "msg"),
+		progressMsgRate: NewPerSecondRateFromCounterVec(ProgressMessageCount, "msg"),
 	}
 }
 

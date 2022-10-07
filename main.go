@@ -72,7 +72,6 @@ func main() {
 			flags.String("pprof-listen-addr", "localhost:6060", "If non-empty, the process will listen on this address for pprof analysis (see https://golang.org/pkg/net/http/pprof/)")
 		}),
 		AfterAllHook(func(_ *cobra.Command) {
-			fmt.Println("Setting up", viper.GetString("global-metrics-listen-addr"), viper.GetString("global-pprof-listen-addr"))
 			setup(zlog, viper.GetString("global-metrics-listen-addr"), viper.GetString("global-pprof-listen-addr"))
 		}),
 	)
@@ -183,6 +182,7 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	recordEntityChange := moduleOutput.TypeName() == "proto:network.types.v1.EntitiesChanges"
+
 	zlog.Info("client configured",
 		zap.Stringer("module_output", moduleOutput),
 		zap.Bool("record_entity_change", recordEntityChange),
@@ -193,7 +193,7 @@ func run(cmd *cobra.Command, args []string) error {
 	)
 
 	stats.Start(viper.GetDuration("frequency"))
-	headFetcher.Start(5 * time.Minute)
+	headFetcher.Start(1 * time.Minute)
 	stateStore.Start(5 * time.Second)
 
 	// We will wait at max approximatively 5m before diying
@@ -246,17 +246,13 @@ func run(cmd *cobra.Command, args []string) error {
 					MessageSizeBytes.AddInt(proto.Size(resp))
 
 					if progress := resp.GetProgress(); progress != nil {
-						ProgressMessageCount.Inc()
-
-						if tracer.Enabled() {
-							zlog.Debug("progress message received", zap.Reflect("progress", progress))
-						}
-
+						processProgressMessage(progress)
 						continue
 					}
 
 					if data := resp.GetData(); data != nil {
 						block := bstream.NewBlockRef(data.Clock.Id, data.Clock.Number)
+
 						if checkFirstBlock {
 							if !bstream.EqualsBlockRefs(activeBlock, bstream.BlockRefEmpty) {
 								zlog.Info("checking first received block",
@@ -277,40 +273,7 @@ func run(cmd *cobra.Command, args []string) error {
 							checkFirstBlock = false
 						}
 
-						if tracer.Enabled() {
-							zlog.Debug("data message received", zap.Reflect("data", data))
-						}
-
-						BackprocessingCompletion.SetUint64(1)
-						HeadBlockNumber.SetUint64(data.Clock.Number)
-						HeadBlockTime.SetBlockTime(data.Clock.Timestamp.AsTime())
-						DataMessageCount.Inc()
-
-						if data.Step == pbsubstreams.ForkStep_STEP_NEW {
-							StepNewCount.Inc()
-						} else if data.Step == pbsubstreams.ForkStep_STEP_UNDO {
-							StepUndoCount.Inc()
-						}
-
-						for _, output := range data.Outputs {
-							if data := output.GetData(); data != nil {
-								OutputMapperCount.Inc(output.Name)
-								OutputMapperSizeBytes.AddInt(proto.Size(output), output.Name)
-
-								if recordEntityChange && output.Name == "graph_out" {
-									if output, found := moduleOutputType(output, graph); found && output.TypeName() == "proto:network.types.v1.EntitiesChanges" {
-										// FIXME: Do we want to actually decode the type to get out the amount of data extracted?
-									}
-								}
-
-								continue
-							}
-
-							if storeDeltas := output.GetStoreDeltas(); storeDeltas != nil {
-								OutputStoreDeltasCount.AddInt(len(storeDeltas.Deltas), output.Name)
-								OutputStoreDeltaSizeBytes.AddInt(proto.Size(output), output.Name)
-							}
-						}
+						processDataMessage(data, graph, recordEntityChange)
 
 						stats.lastBlock = block
 
@@ -352,6 +315,65 @@ func run(cmd *cobra.Command, args []string) error {
 
 	<-app.Terminated()
 	return app.Err()
+}
+
+func processProgressMessage(progress *pbsubstreams.ModulesProgress) {
+	if tracer.Enabled() {
+		zlog.Debug("progress message received", zap.Reflect("progress", progress))
+	}
+
+	for _, module := range progress.Modules {
+		ProgressMessageCount.Inc(module.Name)
+
+		if processedRanges := module.GetProcessedRanges(); processedRanges != nil {
+			latestEndBlock := uint64(0)
+			for _, processedRange := range processedRanges.ProcessedRanges {
+				if processedRange.EndBlock > latestEndBlock {
+					latestEndBlock = processedRange.EndBlock
+				}
+			}
+
+			ModuleProgressBlock.SetUint64(latestEndBlock, module.Name)
+		}
+	}
+}
+
+func processDataMessage(data *pbsubstreams.BlockScopedData, graph *manifest.ModuleGraph, recordEntityChange bool) {
+	if tracer.Enabled() {
+		zlog.Debug("data message received", zap.Reflect("data", data))
+	}
+
+	BackprocessingCompletion.SetUint64(1)
+	HeadBlockNumber.SetUint64(data.Clock.Number)
+	HeadBlockTime.SetBlockTime(data.Clock.Timestamp.AsTime())
+
+	if data.Step == pbsubstreams.ForkStep_STEP_NEW {
+		StepNewCount.Inc()
+	} else if data.Step == pbsubstreams.ForkStep_STEP_UNDO {
+		StepUndoCount.Inc()
+	}
+
+	for _, output := range data.Outputs {
+		DataMessageCount.Inc(output.Name)
+
+		if data := output.GetData(); data != nil {
+			OutputMapperCount.Inc(output.Name)
+			OutputMapperSizeBytes.AddInt(proto.Size(output), output.Name)
+
+			if recordEntityChange && output.Name == "graph_out" {
+				if output, found := moduleOutputType(output, graph); found && output.TypeName() == "proto:network.types.v1.EntitiesChanges" {
+					// FIXME: Do we want to actually decode the type to get out the amount of data extracted?
+				}
+			}
+
+			continue
+		}
+
+		if storeDeltas := output.GetStoreDeltas(); storeDeltas != nil {
+			OutputStoreDeltasCount.AddInt(len(storeDeltas.Deltas), output.Name)
+			OutputStoreDeltaSizeBytes.AddInt(proto.Size(output), output.Name)
+		}
+	}
 }
 
 func moduleOutputType(output *pbsubstreams.ModuleOutput, graph *manifest.ModuleGraph) (moduleOutput *ModuleOutput, found bool) {

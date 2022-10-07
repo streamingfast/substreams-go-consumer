@@ -96,6 +96,12 @@ func (s *HeadFetcher) FetchHeadBlock(ctx context.Context) (ref bstream.BlockRef,
 		},
 	)
 
+	// Only when non-0 we assume the chain block head is right (some chain could have a valid block at 0, but
+	// it's not super important for us).
+	if ref.Num() != 0 {
+		ChainHeadBlockNumber.SetUint64(ref.Num())
+	}
+
 	return ref, err
 }
 
