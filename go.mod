@@ -1,4 +1,4 @@
-module github.com/streamingfast/substreams-go-consumer
+module github.com/streamingfast/substreams-consumer
 
 go 1.18
 

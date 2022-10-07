@@ -35,7 +35,7 @@ var version = "dev"
 // Date value, injected via go build `ldflags` at build time
 var date = ""
 
-var zlog, tracer = logging.ApplicationLogger("consumer", "github.com/streamingfast/substreams-go-consumer",
+var zlog, tracer = logging.ApplicationLogger("consumer", "github.com/streamingfast/substreams-consumer",
 	logging.WithConsoleToStderr(),
 )
 
