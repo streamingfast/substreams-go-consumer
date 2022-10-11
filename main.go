@@ -194,7 +194,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	stats.Start(viper.GetDuration("frequency"))
 	headFetcher.Start(1 * time.Minute)
-	stateStore.Start(5 * time.Second)
+	stateStore.Start(30 * time.Second)
 
 	// We will wait at max approximatively 5m before diying
 	backOff := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 15), ctx)
