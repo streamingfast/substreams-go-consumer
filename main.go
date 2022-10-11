@@ -167,8 +167,10 @@ func run(cmd *cobra.Command, args []string) error {
 	if !cleanState {
 		activeCursor, activeBlock, err = stateStore.Read()
 		cli.NoError(err, "Unable to read state store")
-	} else {
-		if backprocess {
+	}
+
+	if backprocess {
+		if activeCursor == "" {
 			zlog.Info("backprocessing enforced, retrieving head block from endpoint")
 			err := headFetcher.Init(ctx)
 			cli.NoError(err, "Unable to retrieved head block")
@@ -178,6 +180,8 @@ func run(cmd *cobra.Command, args []string) error {
 
 			zlog.Info("overidding start block since backprocessing is enforced", zap.Int64("actual_start_block", startBlock), zap.Uint64("new_start_block", headBlock.Num()))
 			startBlock = int64(headBlock.Num())
+		} else {
+			zlog.Info("backprocessing enforced but an active cursor exists, not overidding start block as we are going to resume from the cursor")
 		}
 	}
 

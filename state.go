@@ -40,8 +40,12 @@ func NewStateStore(outputPath string, fetcher StateFetcher) *StateStore {
 
 func (s *StateStore) Read() (cursor string, block bstream.BlockRef, err error) {
 	content, err := os.ReadFile(s.outputPath)
-	if os.IsNotExist(err) {
-		return "", bstream.BlockRefEmpty, nil
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", bstream.BlockRefEmpty, nil
+		}
+
+		return "", nil, fmt.Errorf("read file: %w", err)
 	}
 
 	if err := yaml.Unmarshal(content, s.state); err != nil {
