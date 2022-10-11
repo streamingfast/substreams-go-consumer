@@ -118,8 +118,8 @@ type syncState struct {
 	StartedAt                 time.Time     `yaml:"started_at,omitempty"`
 	LastSyncedAt              time.Time     `yaml:"last_synced_at,omitempty"`
 	BackprocessingCompletedAt time.Time     `yaml:"backprocessing_completed_at,omitempty"`
-	BackprocessingDuration    time.Duration `ymal:"backprocessing_duration,omitempty"`
-	HeadBlockReachedAt        time.Time     `ymal:"head_block_reached_at,omitempty"`
+	BackprocessingDuration    time.Duration `yaml:"backprocessing_duration,omitempty"`
+	HeadBlockReachedAt        time.Time     `yaml:"head_block_reached_at,omitempty"`
 	HeadBlockReachedDuration  time.Duration `yaml:"head_block_reached_duration,omitempty"`
 }
 
