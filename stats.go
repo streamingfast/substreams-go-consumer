@@ -16,11 +16,11 @@ type Stats struct {
 	lastBlock   bstream.BlockRef
 	stopBlock   uint64
 
-	backprocessingCompletion *ValueFromGauge
-	headBlockReached         *ValueFromGauge
+	backprocessingCompletion *ValueFromMetric
+	headBlockReached         *ValueFromMetric
 
-	dataMsgRate     *RateFromCounterVec
-	progressMsgRate *RateFromCounterVec
+	dataMsgRate     *RateFromCounter
+	progressMsgRate *RateFromCounter
 }
 
 func NewStats(stopBlock uint64, headFetcher *HeadFetcher) *Stats {
@@ -30,11 +30,11 @@ func NewStats(stopBlock uint64, headFetcher *HeadFetcher) *Stats {
 
 		headFetcher: headFetcher,
 
-		backprocessingCompletion: NewValueFromGauge(BackprocessingCompletion, "completion"),
-		headBlockReached:         NewValueFromGauge(HeadBlockReached, "reached"),
+		backprocessingCompletion: NewValueFromMetric(BackprocessingCompletion, "completion"),
+		headBlockReached:         NewValueFromMetric(HeadBlockReached, "reached"),
 
-		dataMsgRate:     NewPerSecondRateFromCounterVec(DataMessageCount, "msg"),
-		progressMsgRate: NewPerSecondRateFromCounterVec(ProgressMessageCount, "msg"),
+		dataMsgRate:     NewPerSecondRateFromCounter(DataMessageCount, "msg"),
+		progressMsgRate: NewPerSecondRateFromCounter(ProgressMessageCount, "msg"),
 	}
 }
 
