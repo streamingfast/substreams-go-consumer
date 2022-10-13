@@ -52,6 +52,13 @@ func (s *StateStore) Read() (cursor string, block bstream.BlockRef, err error) {
 		return "", nil, fmt.Errorf("unmarshal state file %q: %w", s.outputPath, err)
 	}
 
+	// Make all values loaded in local time until all state file migrates to using local time
+	s.state.StartedAt = s.state.StartedAt.Local()
+	s.state.RestartedAt = s.state.RestartedAt.Local()
+	s.state.LastSyncedAt = s.state.LastSyncedAt.Local()
+	s.state.BackprocessingCompletedAt = s.state.BackprocessingCompletedAt.Local()
+	s.state.HeadBlockReachedAt = s.state.HeadBlockReachedAt.Local()
+
 	return s.state.Cursor, bstream.NewBlockRef(s.state.Block.ID, s.state.Block.Number), nil
 }
 
@@ -71,7 +78,12 @@ func (s *StateStore) Start(each time.Duration) {
 		ticker := time.NewTicker(each)
 		defer ticker.Stop()
 
-		s.state.StartedAt = time.Now()
+		restartedAt := time.Now().Local()
+
+		if s.state.StartedAt.IsZero() {
+			s.state.StartedAt = restartedAt
+		}
+		s.state.RestartedAt = restartedAt
 
 		for {
 			select {
@@ -82,7 +94,7 @@ func (s *StateStore) Start(each time.Duration) {
 				s.state.Cursor = cursor
 				s.state.Block.ID = block.ID()
 				s.state.Block.Number = block.Num()
-				s.state.LastSyncedAt = time.Now()
+				s.state.LastSyncedAt = time.Now().Local()
 
 				if backprocessCompleted && s.state.BackprocessingCompletedAt.IsZero() {
 					s.state.BackprocessingCompletedAt = s.state.LastSyncedAt
@@ -113,9 +125,14 @@ func (s *StateStore) Start(each time.Duration) {
 }
 
 type syncState struct {
-	Cursor                    string        `yaml:"cursor"`
-	Block                     blockState    `yaml:"block"`
-	StartedAt                 time.Time     `yaml:"started_at,omitempty"`
+	Cursor string     `yaml:"cursor"`
+	Block  blockState `yaml:"block"`
+	// StartedAt is the time this process was launching initially without accounting to any restart, once set, this
+	// value, it's never re-written (unless the file does not exist anymore).
+	StartedAt time.Time `yaml:"started_at,omitempty"`
+	// RestartedAt is the time this process was last launched meaning it's reset each time the process start. This value
+	// in contrast to `StartedAt` change over time each time the process is restarted.
+	RestartedAt               time.Time     `yaml:"restarted_at,omitempty"`
 	LastSyncedAt              time.Time     `yaml:"last_synced_at,omitempty"`
 	BackprocessingCompletedAt time.Time     `yaml:"backprocessing_completed_at,omitempty"`
 	BackprocessingDuration    time.Duration `yaml:"backprocessing_duration,omitempty"`
