@@ -10,6 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/streamingfast/dmetrics"
+	"github.com/streamingfast/substreams-consumer/ring"
 	"go.uber.org/zap"
 )
 
@@ -110,7 +111,15 @@ func (c *ValueFromMetric) ValueFloat() float64 {
 	return 0.0
 }
 
-// RateFromCounter can be used to extract the instante rate of a Prometheus Metric object.
+func NewPerSecondInstantRateFromCounter(counter *dmetrics.CounterVec, unit string) *RateFromCounter {
+	return newRateFromCounter(counter, 1*time.Second, 0, unit)
+}
+
+func NewPerMinuteInstantRateFromCounter(counter *dmetrics.CounterVec, unit string) *RateFromCounter {
+	return newRateFromCounter(counter, 1*time.Minute, 0, unit)
+}
+
+// NewInstantRateFromCounter can be used to extract the instant rate of a Prometheus Metric object.
 // Right now, the computation is simply to take the diff between two interval checks and
 // infer the rate from there.
 //
@@ -121,40 +130,79 @@ func (c *ValueFromMetric) ValueFloat() float64 {
 //
 // *Important* This for now handles `Vec` metrics by summing for all labels, extracting
 // for one specific label or for all labels is not yet supported.
+func NewInstantRateFromCounter(counter *dmetrics.CounterVec, interval time.Duration, unit string) *RateFromCounter {
+	return newRateFromCounter(counter, interval, 0, unit)
+}
+
+// Average Counter
+
+// RateFromCounter can be used to extract the average rate of a Prometheus Metric object
+// over a period of time. The computation is to accumulate the instant metric each <interval>
+// and obtain an average over <averageTime> duration. The <averageTime> must be greater than
+// <intervalTime> and should be a multiple of it (enforced).
+//
+// If you for example want to log the rate of something each 30s and the rate is checked each 1s,
+// your <averageTime> should be set to 30s.
+//
+// *Important* This for now handles `Vec` metrics by summing for all labels, extracting
+// for one specific label or for all labels is not yet supported.
 type RateFromCounter struct {
-	counter       prometheus.Collector
-	interval      time.Duration
-	unit          string
-	previousTotal uint64
-	actualTotal   uint64
+	counter     prometheus.Collector
+	interval    time.Duration
+	unit        string
+	bucketCount uint64
+	totals      *ring.Ring[uint64]
+	actualTotal uint64
+	actualCount uint64
 
 	isAverage bool
 }
 
-func NewPerSecondRateFromCounter(counter *dmetrics.CounterVec, unit string) *RateFromCounter {
-	return NewRateFromCounter(counter, 1*time.Second, unit)
+func NewPerSecondAverageRateFromCounter(counter *dmetrics.CounterVec, averageTime time.Duration, unit string) *RateFromCounter {
+	return NewAverageRateFromCounter(counter, 1*time.Second, averageTime, unit)
 }
 
-func NewPerMinuteRateFromCounter(counter *dmetrics.CounterVec, unit string) *RateFromCounter {
-	return NewRateFromCounter(counter, 1*time.Minute, unit)
+func NewPerMinuteAverageRateFromCounter(counter *dmetrics.CounterVec, averageTime time.Duration, unit string) *RateFromCounter {
+	return NewAverageRateFromCounter(counter, 1*time.Minute, averageTime, unit)
 }
 
-// NewRateFromCounter creates a counter on which it's easy to how many time an event happen over a fixed
+// NewAverageRateFromCounter creates a counter on which it's easy to how many time an event happen over a fixed
 // period of time.
 //
 // For example, if over 1 second you process 20 blocks, then querying the counter within this 1s interval
 // will yield a result of 20 blocks/s. The rate change as the time moves.
 //
 // ```
-// counter := NewRateFromCounter(1*time.Second, "s", "blocks")
+// counter := NewAverageRateFromCounter(1*time.Second, "s", "blocks")
 // counter.IncByElapsed(since1)
 // counter.IncByElapsed(since2)
 // counter.IncByElapsed(since3)
 //
 // counter.String() == ~150ms/block (over 1s)
 // ```
-func NewRateFromCounter(counter *dmetrics.CounterVec, interval time.Duration, unit string) *RateFromCounter {
-	rate := &RateFromCounter{counter, interval, unit, 0, 0, false}
+func NewAverageRateFromCounter(counter *dmetrics.CounterVec, interval time.Duration, averageTime time.Duration, unit string) *RateFromCounter {
+	return newRateFromCounter(counter, interval, averageTime, unit)
+}
+
+func newRateFromCounter(counter *dmetrics.CounterVec, interval time.Duration, averageTime time.Duration, unit string) *RateFromCounter {
+	isAverage := averageTime != 0
+
+	if isAverage {
+		if interval > averageTime {
+			panic(fmt.Errorf("interval (%s) must be lower than averageTime (%s) but it's not", interval, averageTime))
+		}
+
+		if averageTime%interval != 0 {
+			panic(fmt.Errorf("averageTime (%s) must be divisible by interval (%s) without a remainder but it's not", averageTime, interval))
+		}
+	}
+
+	bucketCount := uint64(2)
+	if isAverage {
+		bucketCount = (uint64(averageTime / interval)) + 1
+	}
+
+	rate := &RateFromCounter{counter, interval, unit, bucketCount, ring.New[uint64](int(bucketCount)), 0, 0, isAverage}
 
 	// FIXME: See `run` documentation about the FIXME
 	rate.run()
@@ -166,7 +214,7 @@ func (c *RateFromCounter) Total() uint64 {
 	return c.actualTotal
 }
 
-func (c *RateFromCounter) total() uint64 {
+func (c *RateFromCounter) current() uint64 {
 	metricChan := make(chan prometheus.Metric, 16)
 	go func() {
 		c.counter.Collect(metricChan)
@@ -206,11 +254,28 @@ func (c *RateFromCounter) RateString() string {
 }
 
 func (c *RateFromCounter) rate() float64 {
-	if c.actualTotal < c.previousTotal {
-		return 0
+	skip := uint64(0)
+	if c.actualCount < uint64(c.bucketCount) {
+		// We do an extra minus one because we are interested about delta and there is always `c.bucketCount - 1` deltas
+		skip = c.bucketCount - c.actualCount - 1
 	}
 
-	return float64(c.actualTotal - c.previousTotal)
+	var sum uint64
+	var deltaCount uint64
+	var valueCount uint64
+	var previousData *uint64
+
+	c.totals.Do(func(total uint64) {
+		if valueCount > skip && previousData != nil {
+			sum += total - *previousData
+			deltaCount++
+		}
+
+		previousData = &total
+		valueCount++
+	})
+
+	return float64(sum) / float64(deltaCount)
 }
 
 // FIXME: Use finalizer trick (search online) to stop the goroutine when the counter goes out of scope
@@ -223,10 +288,11 @@ func (c *RateFromCounter) run() {
 		for {
 			<-ticker.C
 
-			total := c.total()
+			c.actualCount++
+			c.actualTotal = c.current()
 
-			c.previousTotal = c.actualTotal
-			c.actualTotal = total
+			c.totals.Value = c.actualTotal
+			c.totals = c.totals.Next()
 		}
 	}()
 }
@@ -250,10 +316,10 @@ func (c *RateFromCounter) String() string {
 			return fmt.Sprintf(template+"%s (over %s)", c.RateString(), c.unit, c.intervalString())
 		}
 
-		return fmt.Sprintf("%s %s/%s (%d total)", c.RateString(), c.unit, c.timeUnit(), c.actualTotal)
+		return fmt.Sprintf("%s %s/%s (%d total)", c.RateString(), c.unit, c.timeUnit(), c.Total())
 	}
 
-	return fmt.Sprintf("%s %s/%s (%d total)", c.RateString(), c.unit, c.timeUnit(), c.actualTotal)
+	return fmt.Sprintf("%s %s/%s (%d total)", c.RateString(), c.unit, c.timeUnit(), c.Total())
 }
 
 func (c *RateFromCounter) timeUnit() string {

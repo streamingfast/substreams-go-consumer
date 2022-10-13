@@ -33,8 +33,8 @@ func NewStats(stopBlock uint64, headFetcher *HeadFetcher) *Stats {
 		backprocessingCompletion: NewValueFromMetric(BackprocessingCompletion, "completion"),
 		headBlockReached:         NewValueFromMetric(HeadBlockReached, "reached"),
 
-		dataMsgRate:     NewPerSecondRateFromCounter(DataMessageCount, "msg"),
-		progressMsgRate: NewPerSecondRateFromCounter(ProgressMessageCount, "msg"),
+		dataMsgRate:     NewPerSecondAverageRateFromCounter(DataMessageCount, 30*time.Second, "msg"),
+		progressMsgRate: NewPerSecondAverageRateFromCounter(ProgressMessageCount, 30*time.Second, "msg"),
 	}
 }
 
