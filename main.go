@@ -288,6 +288,7 @@ func run(cmd *cobra.Command, args []string) error {
 						chainHeadBlock, found := headFetcher.Current()
 						if found && data.Clock.Number >= chainHeadBlock.Num() {
 							headBlockReached = true
+							HeadBlockReached.SetUint64(1)
 						}
 
 						continue
