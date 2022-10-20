@@ -489,6 +489,8 @@ github.com/streamingfast/dmetrics v0.0.0-20221012032216-6cf8338d4429 h1:ll/nzUOx
 github.com/streamingfast/dmetrics v0.0.0-20221012032216-6cf8338d4429/go.mod h1:fWoyaD76fE7mXZfkfcAfNeU/Hv/y6yJ/RgEcInQLwSw=
 github.com/streamingfast/dstore v0.1.1-0.20220921155016-7a52fdb3fe5f h1:3nO7RSBgMO8ZnjtKvmL+9u2P43B+VwUNWYGnadZduWA=
 github.com/streamingfast/dstore v0.1.1-0.20220921155016-7a52fdb3fe5f/go.mod h1:SHSEIPowGeE1TfNNmGeAUUnlO3dwevmX5kFOSazU60M=
+github.com/streamingfast/dstore v0.1.1-0.20221020150808-d31321dc9490 h1:he/IuMb1Clvs2hLAvQeJgImU+cgIZxeoHiywFM1c3Oo=
+github.com/streamingfast/dstore v0.1.1-0.20221020150808-d31321dc9490/go.mod h1:SHSEIPowGeE1TfNNmGeAUUnlO3dwevmX5kFOSazU60M=
 github.com/streamingfast/eth-go v0.0.0-20220421042603-ebe2c94fcc92 h1:jMLyqSyOP0Wf1wbC0qhTW8GdFr+NM5WBwBzNc74TAk8=
 github.com/streamingfast/eth-go v0.0.0-20220421042603-ebe2c94fcc92/go.mod h1:GSWB6tldvuaUekmehj7yCv/8o6MIWPb+9Hf+m4uZdDM=
 github.com/streamingfast/firehose-ethereum/types v0.0.0-20221004174044-651c04434038 h1:+rWJEWAYWweKE3mHTrEovo5op1cBaf4a9OCGmnNpHYY=
@@ -508,6 +510,8 @@ github.com/streamingfast/shutter v1.5.0 h1:NpzDYzj0HVpSiDJVO/FFSL6QIK/YKOxY0gJAt
 github.com/streamingfast/shutter v1.5.0/go.mod h1:B/T6efqdeMGbGwjzPS1ToXzYZI4kDzI5/u4I+7qbjY8=
 github.com/streamingfast/substreams v0.0.21-0.20220930172905-275ea6cc2b1a h1:wceigxrZ6BplkU6xHPuk60dKt+qzZqzrcAYnLEbNtJI=
 github.com/streamingfast/substreams v0.0.21-0.20220930172905-275ea6cc2b1a/go.mod h1:cG05tgtk6Xh3K3uaPpirPIOTgneLWiysZb2ZRJJqMUc=
+github.com/streamingfast/substreams v0.0.21-0.20221020194910-fd18385d6016 h1:+nwAVGSFIYxmq4nxNBv6SO/ej2JcKiI0MQUQ+DwB1SY=
+github.com/streamingfast/substreams v0.0.21-0.20221020194910-fd18385d6016/go.mod h1:feGf/XHTjNItbsr3M1MTpKaUJYSfA4XeJK/vlaZK9kI=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.1.1/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.2.2/go.mod h1:a8OnRcib4nhh0OaRAV+Yts87kKdq0PP7pXfy6kDkUVs=

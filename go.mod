@@ -17,7 +17,7 @@ require (
 	github.com/streamingfast/logging v0.0.0-20220813175024-b4fbb0e893df
 	github.com/streamingfast/pbgo v0.0.6-0.20220630154121-2e8bba36234e
 	github.com/streamingfast/shutter v1.5.0
-	github.com/streamingfast/substreams v0.0.21-0.20220930172905-275ea6cc2b1a
+	github.com/streamingfast/substreams v0.0.21-0.20221020194910-fd18385d6016
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.34.0
 	go.uber.org/zap v1.21.0
 	golang.org/x/oauth2 v0.0.0-20220622183110-fd043fe589d2
@@ -82,7 +82,7 @@ require (
 	github.com/spf13/jwalterweatherman v1.0.0 // indirect
 	github.com/streamingfast/atm v0.0.0-20220131151839-18c87005e680 // indirect
 	github.com/streamingfast/dbin v0.0.0-20210809205249-73d5eca35dc5 // indirect
-	github.com/streamingfast/dstore v0.1.1-0.20220921155016-7a52fdb3fe5f // indirect
+	github.com/streamingfast/dstore v0.1.1-0.20221020150808-d31321dc9490 // indirect
 	github.com/streamingfast/eth-go v0.0.0-20220421042603-ebe2c94fcc92 // indirect
 	github.com/streamingfast/jsonpb v0.0.0-20210811021341-3670f0aa02d0 // indirect
 	github.com/streamingfast/opaque v0.0.0-20210811180740-0c01d37ea308 // indirect
