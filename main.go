@@ -66,6 +66,7 @@ func main() {
 			flags.DurationP("frequency", "f", 15*time.Second, "At which interval of time we should print statistics locally extracted from Prometheus")
 			flags.BoolP("clean", "c", false, "Do not read existing state from cursor state file and start from scratch instead")
 			flags.String("state-store", "./state.yaml", "Output path where to store latest received cursor, if empty, cursor will not be persisted")
+			flags.BoolP("irreversible-only", "i", false, "Only deal with irreversible blocks (a.k.a final) avoiding live blocks")
 		}),
 		PersistentFlags(func(flags *pflag.FlagSet) {
 			flags.String("metrics-listen-addr", ":9102", "If non-empty, the process will listen on this address to server Prometheus metrics")
@@ -93,6 +94,7 @@ func run(cmd *cobra.Command, args []string) error {
 		blockRange = args[3]
 	}
 
+	irreversibleOnly := viper.GetBool("irreversible-only")
 	backprocess := viper.GetBool("backprocess")
 	cleanState := viper.GetBool("clean")
 	stateStorePath := viper.GetString("state-store")
@@ -105,6 +107,7 @@ func run(cmd *cobra.Command, args []string) error {
 		zap.Bool("backprocess", backprocess),
 		zap.Bool("clean_state", cleanState),
 		zap.String("cursor_store_path", stateStorePath),
+		zap.Bool("irreversible_only", irreversibleOnly),
 	)
 
 	manifestReader := manifest.NewReader(manifestPath)
@@ -202,15 +205,36 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// We will wait at max approximatively 5m before diying
 	backOff := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 15), ctx)
+	forkSteps := []pbsubstreams.ForkStep{pbsubstreams.ForkStep_STEP_NEW, pbsubstreams.ForkStep_STEP_UNDO}
+	if irreversibleOnly {
+		forkSteps = []pbsubstreams.ForkStep{pbsubstreams.ForkStep_STEP_IRREVERSIBLE}
+	}
 
 	for {
 		var lastErr error
 
+		// We use the StartBlockNum as our re-connection cursor until StartCursor is fixed, however
+		// StartBlockNum is inclusive which means on re-connection, we must actually use the next block following
+		// our "cursor" start block. This code below deals with this.
+		requestStartBlock := startBlock
+		if activeCursor != "" {
+			requestStartBlock = int64(activeBlock.Num() + 1)
+		}
+
+		zlog.Info("request info",
+			zap.Int64("start_block", requestStartBlock),
+			zap.Strings("fork_steps", forkStepsToStrings(forkSteps)),
+			zap.Int("module_count", len(pkg.Modules.Modules)),
+			zap.String("output_module", moduleName),
+		)
+
 		req := &pbsubstreams.Request{
-			StartBlockNum: startBlock,
+			StartBlockNum: requestStartBlock,
 			StopBlockNum:  stopBlock,
-			StartCursor:   activeCursor,
-			ForkSteps:     []pbsubstreams.ForkStep{pbsubstreams.ForkStep_STEP_NEW, pbsubstreams.ForkStep_STEP_UNDO},
+			// Cursoring is broken right now, so we use the StartBlockNum for now to deal properly with reconnection, it's recommended
+			// to also activate irreversible-only flag also otherwise there is a high risk
+			// StartCursor:   activeCursor,
+			ForkSteps:     forkSteps,
 			Modules:       pkg.Modules,
 			OutputModules: []string{moduleName},
 		}
@@ -495,4 +519,12 @@ func computeVersionString(version, commit, date string) string {
 	}
 
 	return fmt.Sprintf("%s (%s)", version, strings.Join(labels, ", "))
+}
+
+func forkStepsToStrings(steps []pbsubstreams.ForkStep) (out []string) {
+	out = make([]string, len(steps))
+	for i, step := range steps {
+		out[i] = strings.ToLower(strings.Replace(step.String(), "STEP_", "", 1))
+	}
+	return
 }
