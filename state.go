@@ -39,6 +39,7 @@ func NewStateStore(outputPath string, fetcher StateFetcher) *StateStore {
 }
 
 func (s *StateStore) Delete() error {
+	zlog.Info("deleting output path file", zap.String("output_path", s.outputPath))
 	return os.Remove(s.outputPath)
 }
 
