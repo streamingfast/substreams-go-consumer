@@ -38,6 +38,10 @@ func NewStateStore(outputPath string, fetcher StateFetcher) *StateStore {
 	}
 }
 
+func (s *StateStore) Delete() error {
+	return os.Remove(s.outputPath)
+}
+
 func (s *StateStore) Read() (cursor string, block bstream.BlockRef, err error) {
 	content, err := os.ReadFile(s.outputPath)
 	if err != nil {

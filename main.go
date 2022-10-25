@@ -67,6 +67,7 @@ func main() {
 			flags.DurationP("frequency", "f", 15*time.Second, "At which interval of time we should print statistics locally extracted from Prometheus")
 			flags.BoolP("clean", "c", false, "Do not read existing state from cursor state file and start from scratch instead")
 			flags.String("state-store", "./state.yaml", "Output path where to store latest received cursor, if empty, cursor will not be persisted")
+			flags.String("api-listen-addr", ":8080", "Rest API to manage consumer")
 			flags.BoolP("irreversible-only", "i", false, "Only deal with irreversible blocks (a.k.a final) avoiding live blocks")
 		}),
 		PersistentFlags(func(flags *pflag.FlagSet) {
@@ -99,6 +100,7 @@ func run(cmd *cobra.Command, args []string) error {
 	backprocess := viper.GetBool("backprocess")
 	cleanState := viper.GetBool("clean")
 	stateStorePath := viper.GetString("state-store")
+	apiListenAddr := viper.GetString("api-listen-addr")
 
 	zlog.Info("consuming substreams",
 		zap.String("endpoint", endpoint),
@@ -109,6 +111,7 @@ func run(cmd *cobra.Command, args []string) error {
 		zap.Bool("clean_state", cleanState),
 		zap.String("cursor_store_path", stateStorePath),
 		zap.Bool("irreversible_only", irreversibleOnly),
+		zap.String("manage_listen_addr", apiListenAddr),
 	)
 
 	manifestReader := manifest.NewReader(manifestPath)
@@ -187,6 +190,17 @@ func run(cmd *cobra.Command, args []string) error {
 	})
 	app.OnTerminating(func(_ error) { stateStore.Close() })
 	stateStore.OnTerminated(func(err error) { app.Shutdown(err) })
+
+	managementApi := NewManager(apiListenAddr)
+	managementApi.OnTerminated(func(err error) { app.Shutdown(err) })
+	app.OnTerminating(func(err error) {
+		if managementApi.shouldResetState {
+			if err := stateStore.Delete(); err != nil {
+				zlog.Warn("failed to delete state store", zap.Error(err))
+			}
+		}
+	})
+	go managementApi.Launch()
 
 	if !cleanState {
 		activeCursor, activeBlock, err = stateStore.Read()
