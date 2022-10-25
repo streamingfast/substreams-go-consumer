@@ -22,18 +22,18 @@ func NewManager(listenAddr string) *Manager {
 }
 
 func (m *Manager) resetState(w http.ResponseWriter, r *http.Request) {
-	zlog.Info("state will reset on next restart")
+	w.Write([]byte("state will reset on next restart\n"))
 	m.shouldResetState = true
 
 }
 
 func (m *Manager) cancelResetState(w http.ResponseWriter, r *http.Request) {
-	zlog.Info("state will *NOT* reset on next restart")
+	w.Write([]byte("state will *NOT* reset on next restart\n"))
 	m.shouldResetState = false
 }
 
 func (m *Manager) shutdown(w http.ResponseWriter, r *http.Request) {
-	zlog.Info("shutting down consumer")
+	w.Write([]byte("shutting down consumer\n"))
 	m.Shutdown(nil)
 }
 
@@ -42,7 +42,7 @@ func (s *Manager) Launch() {
 
 	coreRouter := router.PathPrefix("/").Subrouter()
 	coreRouter.HandleFunc("/healthz", func(writer http.ResponseWriter, request *http.Request) {
-		writer.Write([]byte("ok"))
+		writer.Write([]byte("ok\n"))
 	})
 	coreRouter.HandleFunc("/resetstate", s.resetState).Methods("POST")
 	coreRouter.HandleFunc("/cancelresetstate", s.cancelResetState).Methods("POST")
