@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -88,7 +89,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	endpoint := args[0]
 	manifestPath := args[1]
-	moduleName := args[2]
+	moduleNames := args[2]
 	blockRange := ""
 	if len(args) > 3 {
 		blockRange = args[3]
@@ -102,7 +103,7 @@ func run(cmd *cobra.Command, args []string) error {
 	zlog.Info("consuming substreams",
 		zap.String("endpoint", endpoint),
 		zap.String("manifest_path", manifestPath),
-		zap.String("module_name", moduleName),
+		zap.String("module_names", moduleNames),
 		zap.String("block_range", blockRange),
 		zap.Bool("backprocess", backprocess),
 		zap.Bool("clean_state", cleanState),
@@ -117,19 +118,39 @@ func run(cmd *cobra.Command, args []string) error {
 	graph, err := manifest.NewModuleGraph(pkg.Modules.Modules)
 	cli.NoError(err, "Create Substreams module graph")
 
-	module, err := graph.Module(moduleName)
-	cli.NoError(err, "Unable to get module")
+	resolvedStartBlock := int64(math.MaxInt64)
+	resolvedStopBlock := uint64(0)
+	var outputModuleNames []string
+	var outputModules []*pbsubstreams.Module
+	recordEntityChange := false
+	hasOutputStore := false
+	for _, moduleName := range strings.Split(moduleNames, ",") {
+		module, err := graph.Module(moduleName)
+		cli.NoError(err, "Unable to get module")
 
-	moduleOutput := (*ModuleOutput)(module.Output)
+		startBlock, stopBlock, err := readBlockRange(module, blockRange)
+		cli.NoError(err, "Unable to read block range")
 
-	if backprocess && module.GetKindMap() != nil {
-		return fmt.Errorf("module %q is of type 'Mapper', it's invalid to enforce backprocessing (-b) of a mapper module, only store module can be backprocessed", module.Name)
+		if startBlock < resolvedStartBlock {
+			resolvedStartBlock = startBlock
+		}
+		if stopBlock > resolvedStopBlock {
+			resolvedStopBlock = stopBlock
+		}
+
+		if module.GetKindStore() != nil {
+			hasOutputStore = true
+		}
+
+		outputModuleNames = append(outputModuleNames, module.Name)
+		outputModules = append(outputModules, module)
 	}
 
-	startBlock, stopBlock, err := readBlockRange(module, blockRange)
-	cli.NoError(err, "Unable to read block range")
+	if backprocess && !hasOutputStore {
+		return fmt.Errorf("output modules %s does not contain a type 'Store', it's invalid to enforce backprocessing (-b) without a output module being a store, only store module can be backprocessed", moduleNames)
+	}
 
-	zlog.Info("resolved block range", zap.Int64("start_block", startBlock), zap.Uint64("stop_block", stopBlock))
+	zlog.Info("resolved block range", zap.Int64("start_block", resolvedStartBlock), zap.Uint64("stop_block", resolvedStopBlock))
 
 	apiToken := readAPIToken()
 
@@ -152,7 +173,7 @@ func run(cmd *cobra.Command, args []string) error {
 	app.OnTerminating(func(_ error) { headFetcher.Close() })
 	headFetcher.OnTerminated(func(err error) { app.Shutdown(err) })
 
-	stats := NewStats(stopBlock, headFetcher)
+	stats := NewStats(resolvedStopBlock, headFetcher)
 	app.OnTerminating(func(_ error) { stats.Close() })
 	stats.OnTerminated(func(err error) { app.Shutdown(err) })
 
@@ -181,20 +202,18 @@ func run(cmd *cobra.Command, args []string) error {
 			headBlock, found := headFetcher.Current()
 			cli.Ensure(found, "Head block should be set at that point")
 
-			zlog.Info("overidding start block since backprocessing is enforced", zap.Int64("actual_start_block", startBlock), zap.Uint64("new_start_block", headBlock.Num()))
-			startBlock = int64(headBlock.Num())
+			zlog.Info("overidding start block since backprocessing is enforced", zap.Int64("actual_start_block", resolvedStartBlock), zap.Uint64("new_start_block", headBlock.Num()))
+			resolvedStartBlock = int64(headBlock.Num())
 		} else {
 			zlog.Info("backprocessing enforced but an active cursor exists, not overidding start block as we are going to resume from the cursor")
 		}
 	}
 
-	recordEntityChange := moduleOutput.TypeName() == "proto:network.types.v1.EntitiesChanges"
-
 	zlog.Info("client configured",
-		zap.Stringer("module_output", moduleOutput),
 		zap.Bool("record_entity_change", recordEntityChange),
-		zap.Int64("start_block", startBlock),
-		zap.Uint64("stop_block", stopBlock),
+		zap.Int64("start_block", resolvedStartBlock),
+		zap.Uint64("stop_block", resolvedStopBlock),
+		zap.Strings("output_modules", outputModuleNames),
 		zap.Stringer("active_block", activeBlock),
 		zap.String("active_cursor", activeCursor),
 	)
@@ -216,7 +235,7 @@ func run(cmd *cobra.Command, args []string) error {
 		// We use the StartBlockNum as our re-connection cursor until StartCursor is fixed, however
 		// StartBlockNum is inclusive which means on re-connection, we must actually use the next block following
 		// our "cursor" start block. This code below deals with this.
-		requestStartBlock := startBlock
+		requestStartBlock := resolvedStartBlock
 		if activeCursor != "" {
 			requestStartBlock = int64(activeBlock.Num() + 1)
 		}
@@ -225,18 +244,18 @@ func run(cmd *cobra.Command, args []string) error {
 			zap.Int64("start_block", requestStartBlock),
 			zap.Strings("fork_steps", forkStepsToStrings(forkSteps)),
 			zap.Int("module_count", len(pkg.Modules.Modules)),
-			zap.String("output_module", moduleName),
+			zap.Strings("output_moduleS", outputModuleNames),
 		)
 
 		req := &pbsubstreams.Request{
 			StartBlockNum: requestStartBlock,
-			StopBlockNum:  stopBlock,
+			StopBlockNum:  resolvedStopBlock,
 			// Cursoring is broken right now, so we use the StartBlockNum for now to deal properly with reconnection, it's recommended
 			// to also activate irreversible-only flag also otherwise there is a high risk
 			// StartCursor:   activeCursor,
 			ForkSteps:     forkSteps,
 			Modules:       pkg.Modules,
-			OutputModules: []string{moduleName},
+			OutputModules: outputModuleNames,
 		}
 
 		err = pbsubstreams.ValidateRequest(req)
