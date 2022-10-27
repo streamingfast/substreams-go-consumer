@@ -27,15 +27,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// Commit sha1 value, injected via go build `ldflags` at build time
-var commit = ""
-
-// Version value, injected via go build `ldflags` at build time
-var version = "dev"
-
-// Date value, injected via go build `ldflags` at build time
-var date = ""
-
 var zlog, tracer = logging.ApplicationLogger("consumer", "github.com/streamingfast/substreams-consumer",
 	logging.WithConsoleToStderr(),
 )
@@ -121,11 +112,12 @@ func run(cmd *cobra.Command, args []string) error {
 	graph, err := manifest.NewModuleGraph(pkg.Modules.Modules)
 	cli.NoError(err, "Create Substreams module graph")
 
+	recordEntityChange := false
+
 	resolvedStartBlock := int64(math.MaxInt64)
 	resolvedStopBlock := uint64(0)
+
 	var outputModuleNames []string
-	var outputModules []*pbsubstreams.Module
-	recordEntityChange := false
 	hasOutputStore := false
 	for _, moduleName := range strings.Split(moduleNames, ",") {
 		module, err := graph.Module(moduleName)
@@ -146,7 +138,6 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 
 		outputModuleNames = append(outputModuleNames, module.Name)
-		outputModules = append(outputModules, module)
 	}
 
 	if backprocess && !hasOutputStore {
@@ -193,7 +184,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	managementApi := NewManager(apiListenAddr)
 	managementApi.OnTerminated(func(err error) { app.Shutdown(err) })
-	app.OnTerminating(func(err error) {
+	app.OnTerminating(func(_ error) {
 		if managementApi.shouldResetState {
 			if err := stateStore.Delete(); err != nil {
 				zlog.Warn("failed to delete state store", zap.Error(err))
@@ -246,27 +237,17 @@ func run(cmd *cobra.Command, args []string) error {
 	for {
 		var lastErr error
 
-		// We use the StartBlockNum as our re-connection cursor until StartCursor is fixed, however
-		// StartBlockNum is inclusive which means on re-connection, we must actually use the next block following
-		// our "cursor" start block. This code below deals with this.
-		requestStartBlock := resolvedStartBlock
-		if activeCursor != "" {
-			requestStartBlock = int64(activeBlock.Num() + 1)
-		}
-
 		zlog.Info("request info",
-			zap.Int64("start_block", requestStartBlock),
+			zap.Int64("start_block", resolvedStartBlock),
 			zap.Strings("fork_steps", forkStepsToStrings(forkSteps)),
 			zap.Int("module_count", len(pkg.Modules.Modules)),
 			zap.Strings("output_moduleS", outputModuleNames),
 		)
 
 		req := &pbsubstreams.Request{
-			StartBlockNum: requestStartBlock,
+			StartBlockNum: resolvedStartBlock,
 			StopBlockNum:  resolvedStopBlock,
-			// Cursoring is broken right now, so we use the StartBlockNum for now to deal properly with reconnection, it's recommended
-			// to also activate irreversible-only flag also otherwise there is a high risk
-			// StartCursor:   activeCursor,
+			StartCursor:   activeCursor,
 			ForkSteps:     forkSteps,
 			Modules:       pkg.Modules,
 			OutputModules: outputModuleNames,
@@ -301,9 +282,10 @@ func run(cmd *cobra.Command, args []string) error {
 					break
 				}
 
-				if resp != nil {
-					backOff.Reset()
+				// We receive one message, we are goog to
+				backOff.Reset()
 
+				if resp != nil {
 					MessageSizeBytes.AddInt(proto.Size(resp))
 
 					if progress := resp.GetProgress(); progress != nil {
@@ -400,7 +382,7 @@ func processProgressMessage(progress *pbsubstreams.ModulesProgress) {
 	}
 }
 
-func processDataMessage(data *pbsubstreams.BlockScopedData, graph *manifest.ModuleGraph, recordEntityChange bool) {
+func processDataMessage(data *pbsubstreams.BlockScopedData, _ *manifest.ModuleGraph, _ bool) {
 	if tracer.Enabled() {
 		zlog.Debug("data message received", zap.Reflect("data", data))
 	}
@@ -422,11 +404,11 @@ func processDataMessage(data *pbsubstreams.BlockScopedData, graph *manifest.Modu
 			OutputMapperCount.Inc(output.Name)
 			OutputMapperSizeBytes.AddInt(proto.Size(output), output.Name)
 
-			if recordEntityChange && output.Name == "graph_out" {
-				if output, found := moduleOutputType(output, graph); found && output.TypeName() == "proto:network.types.v1.EntitiesChanges" {
-					// FIXME: Do we want to actually decode the type to get out the amount of data extracted?
-				}
-			}
+			// FIXME: Do we want to actually decode the type to get out the amount of data extracted?
+			// if recordEntityChange && output.Name == "graph_out" {
+			// 	// if output, found := moduleOutputType(output, graph); found && output.TypeName() == "proto:network.types.v1.EntitiesChanges" {
+			// 	// }
+			// }
 
 			continue
 		}
@@ -438,16 +420,16 @@ func processDataMessage(data *pbsubstreams.BlockScopedData, graph *manifest.Modu
 	}
 }
 
-func moduleOutputType(output *pbsubstreams.ModuleOutput, graph *manifest.ModuleGraph) (moduleOutput *ModuleOutput, found bool) {
-	module, err := graph.Module(output.Name)
-	if err != nil {
-		// There is only one kind of error in the `Module` implementation, when the module is not found, hopefully it stays
-		// like that forever!
-		return nil, false
-	}
+// func moduleOutputType(output *pbsubstreams.ModuleOutput, graph *manifest.ModuleGraph) (moduleOutput *ModuleOutput, found bool) {
+// 	module, err := graph.Module(output.Name)
+// 	if err != nil {
+// 		// There is only one kind of error in the `Module` implementation, when the module is not found, hopefully it stays
+// 		// like that forever!
+// 		return nil, false
+// 	}
 
-	return (*ModuleOutput)(module.Output), module.Output != nil
-}
+// 	return (*ModuleOutput)(module.Output), module.Output != nil
+// }
 
 func readAPIToken() string {
 	apiToken := viper.GetString("api-token")
@@ -508,50 +490,6 @@ func resolveBlockNumber(value int64, ifMinus1 int64, relative bool, against uint
 	}
 
 	return int64(against) + value
-}
-
-func readStopBlockFlag(cmd *cobra.Command, startBlock int64, flagName string) (uint64, error) {
-	val, err := cmd.Flags().GetString(flagName)
-	if err != nil {
-		panic(fmt.Sprintf("flags: couldn't find flag %q", flagName))
-	}
-
-	isRelative := strings.HasPrefix(val, "+")
-	if isRelative {
-		if startBlock == -1 {
-			return 0, fmt.Errorf("relative end block is supported only with an absolute start block")
-		}
-
-		val = strings.TrimPrefix(val, "+")
-	}
-
-	endBlock, err := strconv.ParseUint(val, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("end block is invalid: %w", err)
-	}
-
-	if isRelative {
-		return uint64(startBlock) + endBlock, nil
-	}
-
-	return endBlock, nil
-}
-
-func computeVersionString(version, commit, date string) string {
-	var labels []string
-	if len(commit) >= 7 {
-		labels = append(labels, fmt.Sprintf("Commit %s", commit[0:7]))
-	}
-
-	if date != "" {
-		labels = append(labels, fmt.Sprintf("Built %s", date))
-	}
-
-	if len(labels) == 0 {
-		return version
-	}
-
-	return fmt.Sprintf("%s (%s)", version, strings.Join(labels, ", "))
 }
 
 func forkStepsToStrings(steps []pbsubstreams.ForkStep) (out []string) {

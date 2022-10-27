@@ -74,7 +74,7 @@ func (s *HeadFetcher) Start(refreshEach time.Duration) {
 
 				s.value.Store(headBlock)
 			case <-s.Terminating():
-				break
+				return
 			}
 		}
 	}()
