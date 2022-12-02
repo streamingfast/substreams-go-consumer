@@ -50,6 +50,7 @@ func main() {
 			flags.StringP("api-token", "a", "", "API Token to use for Substreams authentication, SUBSTREAMS_API_TOKEN is automatically checked also")
 			flags.BoolP("insecure", "k", false, "Skip certificate validation on GRPC connection")
 			flags.BoolP("plaintext", "p", false, "Establish GRPC connection in plaintext")
+			flags.Bool("production-mode", false, "Enables production store")
 			flags.DurationP("frequency", "f", 15*time.Second, "At which interval of time we should print statistics locally extracted from Prometheus")
 			flags.BoolP("clean", "c", false, "Do not read existing state from cursor state file and start from scratch instead")
 			flags.String("state-store", "./state.yaml", "Output path where to store latest received cursor, if empty, cursor will not be persisted")
@@ -85,6 +86,8 @@ func run(cmd *cobra.Command, args []string) error {
 	irreversibleOnly := viper.GetBool("irreversible-only")
 	cleanState := viper.GetBool("clean")
 	stateStorePath := viper.GetString("state-store")
+	productionMode := viper.GetBool("production-mode")
+
 	apiListenAddr := viper.GetString("api-listen-addr")
 
 	zlog.Info("consuming substreams",
@@ -93,6 +96,7 @@ func run(cmd *cobra.Command, args []string) error {
 		zap.String("module_name", moduleName),
 		zap.String("block_range", blockRange),
 		zap.Bool("clean_state", cleanState),
+		zap.Bool("production_mode", productionMode),
 		zap.String("cursor_store_path", stateStorePath),
 		zap.Bool("irreversible_only", irreversibleOnly),
 		zap.String("manage_listen_addr", apiListenAddr),
@@ -184,6 +188,7 @@ func run(cmd *cobra.Command, args []string) error {
 	zlog.Info("client configured",
 		zap.Bool("record_entity_change", recordEntityChange),
 		zap.Int64("start_block", resolvedStartBlock),
+		zap.Bool("production_mode", productionMode),
 		zap.Uint64("stop_block", resolvedStopBlock),
 		zap.String("output_module_name", moduleName),
 		zap.Stringer("active_block", activeBlock),
@@ -212,12 +217,13 @@ func run(cmd *cobra.Command, args []string) error {
 		)
 
 		req := &pbsubstreams.Request{
-			StartBlockNum: resolvedStartBlock,
-			StopBlockNum:  resolvedStopBlock,
-			StartCursor:   activeCursor,
-			ForkSteps:     forkSteps,
-			Modules:       pkg.Modules,
-			OutputModules: []string{moduleName},
+			StartBlockNum:  resolvedStartBlock,
+			StartCursor:    activeCursor,
+			StopBlockNum:   resolvedStopBlock,
+			ForkSteps:      forkSteps,
+			ProductionMode: productionMode,
+			Modules:        pkg.Modules,
+			OutputModules:  []string{moduleName},
 		}
 
 		err = pbsubstreams.ValidateRequest(req)
@@ -380,10 +386,10 @@ func processDataMessage(data *pbsubstreams.BlockScopedData, _ *manifest.ModuleGr
 			continue
 		}
 
-		if storeDeltas := output.GetStoreDeltas(); storeDeltas != nil {
-			OutputStoreDeltasCount.AddInt(len(storeDeltas.Deltas), output.Name)
-			OutputStoreDeltaSizeBytes.AddInt(proto.Size(output), output.Name)
-		}
+		//if storeDeltas := output.GetStoreDeltas(); storeDeltas != nil {
+		//	OutputStoreDeltasCount.AddInt(len(storeDeltas.Deltas), output.Name)
+		//	OutputStoreDeltaSizeBytes.AddInt(proto.Size(output), output.Name)
+		//}
 	}
 }
 
