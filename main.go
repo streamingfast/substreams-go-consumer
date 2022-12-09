@@ -33,7 +33,7 @@ var zlog, tracer = logging.ApplicationLogger("consumer", "github.com/streamingfa
 
 func main() {
 	Run(
-		"consume <endpoint> <manifest> <module> [<start>:<stop>]",
+		"substreams-consumer <endpoint> <manifest> <module> [<start>:<stop>]",
 		"Consumes the given Substreams manifest against the endpoint optionally within a range of blocks",
 		Execute(run),
 		Description(`
@@ -42,7 +42,7 @@ func main() {
 			The <endpoint> argument must always have its port defined.
 		`),
 		Example(`
-			consume mainnet.eth.streamingfast.io:443 ethereum-network-v1-v0.1.0.spkg graph_out +1000
+			substreams-consumer mainnet.eth.streamingfast.io:443 ethereum-network-v1-v0.1.0.spkg graph_out +1000
 		`),
 		ConfigureViper("CONSUMER"),
 		RangeArgs(3, 4),
