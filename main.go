@@ -247,6 +247,7 @@ func run(cmd *cobra.Command, args []string) error {
 					}
 
 					if err == io.EOF {
+						stats.LogNow()
 						zlog.Info("completed")
 						return nil
 					}
@@ -260,6 +261,11 @@ func run(cmd *cobra.Command, args []string) error {
 
 				if resp != nil {
 					MessageSizeBytes.AddInt(proto.Size(resp))
+
+					if session := resp.GetSession(); session != nil {
+						zlog.Info("session initialized", zap.String("trace_id", session.TraceId))
+						continue
+					}
 
 					if progress := resp.GetProgress(); progress != nil {
 						processProgressMessage(progress)
