@@ -11,41 +11,19 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/streamingfast/dmetrics"
 	"github.com/streamingfast/substreams-consumer/ring"
+	sink "github.com/streamingfast/substreams-sink"
 	"go.uber.org/zap"
 )
 
 var metrics = dmetrics.NewSet()
 
-var HeadBlockNumber = metrics.NewHeadBlockNumber("substreams-consumer")
-var HeadBlockTime = metrics.NewHeadTimeDrift("substreams-consumer")
-var ChainHeadBlockNumber = metrics.NewGauge("chain_head_block_number", "The latest block of the chain as reported by Firehose endpoint")
-
-var FirehoseErrorCount = metrics.NewCounter("firehose_error", "The error count we encountered when interacting with Firehose for which we had to restart the connection loop")
-var SubstreamsErrorCount = metrics.NewCounter("substreams_error", "The error count we encountered when interacting with Substreams for which we had to restart the connection loop")
-
-var MessageSizeBytes = metrics.NewCounter("message_size_bytes", "The number of total bytes of message received from the Substreams backend")
-var UnknownMessageCount = metrics.NewCounter("unknown_message", "The number of data message received")
-var DataMessageCount = metrics.NewCounterVec("data_message", []string{"module"}, "The number of data message received")
-var ProgressMessageCount = metrics.NewCounterVec("progress_message", []string{"module"}, "The number of progress message received")
-
-var BackprocessingCompletion = metrics.NewGauge("backprocessing_completion", "Determines if backprocessing is completed, which is if we receive a first data message")
-var HeadBlockReached = metrics.NewGauge("head_block_reached", "Determines if head block was reached at some point, once set it will not change anymore however on restart, there might be a delay before it's set back to 1")
-
-var ModuleProgressBlock = metrics.NewGaugeVec("module_progress_last_block", []string{"module"}, "Latest processed range end block for each module")
-
-var StepNewCount = metrics.NewCounter("step_new_count", "How many NEW step message we received")
-var StepUndoCount = metrics.NewCounter("step_undo_count", "How many UNDO step message we received")
-
-var OutputMapperCount = metrics.NewCounterVec("output_mapper_count", []string{"module"}, "The number Mapper output type (a.k.a Data) per module received so far")
-var OutputStoreDeltasCount = metrics.NewCounterVec("output_store_deltas_count", []string{"module"}, "The number Store Deltas output type per module received so far")
-
-var OutputMapperSizeBytes = metrics.NewCounterVec("output_mapper_size_bytes", []string{"module"}, "The number Mapper output type (a.k.a Data) per module received so far")
-var OutputStoreDeltaSizeBytes = metrics.NewCounterVec("output_store_delta_size_bytes", []string{"module"}, "The number Store Delta output type per module received so far")
-
-// var EntityChangesCount = metrics.NewCounter("entity_change", "The number of entity changes received, only works if module output type is ")
+var ChainHeadBlockNumber = metrics.NewGauge("substreams_consumer_chain_head_block_number", "The latest block of the chain as reported by Firehose endpoint")
+var BackprocessingCompletion = metrics.NewGauge("substreams_consumer_backprocessing_completion", "Determines if backprocessing is completed, which is if we receive a first data message")
+var HeadBlockReached = metrics.NewGauge("substreams_consumer_head_block_reached", "Determines if head block was reached at some point, once set it will not change anymore however on restart, there might be a delay before it's set back to 1")
 
 func setup(logger *zap.Logger, metricsListenAddr string, pprofListenAddr string) {
 	if metricsListenAddr != "" {
+		sink.RegisterMetrics()
 		metrics.Register()
 
 		go dmetrics.Serve(metricsListenAddr)

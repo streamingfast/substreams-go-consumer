@@ -8,11 +8,12 @@ import (
 
 	"github.com/streamingfast/bstream"
 	"github.com/streamingfast/shutter"
+	sink "github.com/streamingfast/substreams-sink"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 )
 
-type StateFetcher func() (cursor string, block bstream.BlockRef, backprocessCompleted bool, headBlockReached bool)
+type StateFetcher func() (cursor *sink.Cursor, backprocessCompleted bool, headBlockReached bool)
 
 type StateStore struct {
 	*shutter.Shutter
@@ -106,11 +107,11 @@ func (s *StateStore) Start(each time.Duration) {
 
 func (s *StateStore) SyncNow() error {
 	zlog.Debug("saving cursor to output path", zap.String("output_path", s.outputPath))
-	cursor, block, backprocessCompleted, headBlockReached := s.fetcher()
+	cursor, backprocessCompleted, headBlockReached := s.fetcher()
 
-	s.state.Cursor = cursor
-	s.state.Block.ID = block.ID()
-	s.state.Block.Number = block.Num()
+	s.state.Cursor = cursor.String()
+	s.state.Block.ID = cursor.Block().ID()
+	s.state.Block.Number = cursor.Block().Num()
 	s.state.LastSyncedAt = time.Now().Local()
 
 	if backprocessCompleted && s.state.BackprocessingCompletedAt.IsZero() {

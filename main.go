@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -41,8 +40,13 @@ func main() {
 		Flags(func(flags *pflag.FlagSet) {
 			sink.AddFlagsToSet(flags, sink.FlagIgnore(sink.FlagIrreversibleOnly))
 
+			frequencyDefault := 15 * time.Second
+			if zlog.Core().Enabled(zap.DebugLevel) {
+				frequencyDefault = 5 * time.Second
+			}
+
 			flags.BoolP("clean", "c", false, "Do not read existing state from cursor state file and start from scratch instead")
-			flags.DurationP("frequency", "f", 15*time.Second, "At which interval of time we should print statistics locally extracted from Prometheus")
+			flags.DurationP("frequency", "f", frequencyDefault, "At which interval of time we should print statistics locally extracted from Prometheus")
 			flags.String("state-store", "./state.yaml", "Output path where to store latest received cursor, if empty, cursor will not be persisted")
 			flags.String("api-listen-addr", ":8080", "Rest API to manage consumer")
 		}),
@@ -115,8 +119,8 @@ func run(cmd *cobra.Command, args []string) error {
 	app.OnTerminating(func(_ error) { stats.Close() })
 	stats.OnTerminated(func(err error) { app.Shutdown(err) })
 
-	stateStore := NewStateStore(stateStorePath, func() (string, bstream.BlockRef, bool, bool) {
-		return sinker.activeCursor, sinker.activeBlock, sinker.backprocessingCompleted, sinker.headBlockReached
+	stateStore := NewStateStore(stateStorePath, func() (*sink.Cursor, bool, bool) {
+		return sinker.activeCursor, sinker.backprocessingCompleted, sinker.headBlockReached
 	})
 	app.OnTerminating(func(_ error) { stateStore.Close() })
 	stateStore.OnTerminated(func(err error) { app.Shutdown(err) })
@@ -133,17 +137,19 @@ func run(cmd *cobra.Command, args []string) error {
 	go managementApi.Launch()
 
 	if !cleanState {
-		sinker.activeCursor, sinker.activeBlock, err = stateStore.Read()
+		cursor, _, err := stateStore.Read()
 		cli.NoError(err, "Unable to read state store")
+
+		sinker.activeCursor = sink.MustNewCursor(cursor)
 	}
 
 	zlog.Info("client configured",
 		zap.String("output_module_name", moduleName),
-		zap.Stringer("active_block", sinker.activeBlock),
-		zap.String("active_cursor", sinker.activeCursor),
+		zap.Stringer("active_block", sinker.activeCursor.Block()),
+		zap.String("active_cursor", sinker.activeCursor.String()),
 	)
 
-	stats.Start(viper.GetDuration("frequency"))
+	stats.Start(sflags.MustGetDuration(cmd, "frequency"))
 	headFetcher.Start(1 * time.Minute)
 	stateStore.Start(30 * time.Second)
 
@@ -186,15 +192,13 @@ type Sinker struct {
 
 	headFetcher *HeadFetcher
 
-	activeCursor            string
-	activeBlock             bstream.BlockRef
-	checkFirstBlock         bool
+	activeCursor            *sink.Cursor
 	headBlockReached        bool
 	backprocessingCompleted bool
 }
 
 func (s *Sinker) Run(ctx context.Context) {
-	s.Sinker.Run(ctx, sink.MustNewCursor(s.activeCursor), s)
+	s.Sinker.Run(ctx, s.activeCursor, s)
 }
 
 func (s *Sinker) HandleBlockScopedData(ctx context.Context, data *pbsubstreamsrpc.BlockScopedData, isLive *bool, cursor *sink.Cursor) error {
@@ -204,27 +208,7 @@ func (s *Sinker) HandleBlockScopedData(ctx context.Context, data *pbsubstreamsrp
 
 	block := bstream.NewBlockRef(data.Clock.Id, data.Clock.Number)
 
-	if s.checkFirstBlock {
-		if !bstream.EqualsBlockRefs(s.activeBlock, bstream.BlockRefEmpty) {
-			zlog.Info("checking first received block",
-				zap.Stringer("block_at_cursor", s.activeBlock),
-				zap.Stringer("first_block", block),
-			)
-
-			// Correct check would be using parent/child relationship, if the clock had
-			// information about the parent block right there, we could validate that active block
-			// is actually the parent of first received block. For now, let's ensure we have a following
-			// block (will not work on network's that can skip block's num like NEAR or Solana).
-			if block.Num()-1 != s.activeBlock.Num() {
-				return fmt.Errorf("block continuity on first block after restarting from cursor does not follow")
-			}
-		}
-
-		s.checkFirstBlock = false
-	}
-
-	s.activeBlock = block
-	s.activeCursor = cursor.String()
+	s.activeCursor = cursor
 	s.backprocessingCompleted = true
 
 	chainHeadBlock, found := s.headFetcher.Current()
@@ -237,6 +221,7 @@ func (s *Sinker) HandleBlockScopedData(ctx context.Context, data *pbsubstreamsrp
 }
 
 func (s *Sinker) HandleBlockUndoSignal(ctx context.Context, undoSignal *pbsubstreamsrpc.BlockUndoSignal, cursor *sink.Cursor) error {
-	s.activeBlock = bstream.NewBlockRef(undoSignal.LastValidBlock.Id, undoSignal.LastValidBlock.Number)
+	s.activeCursor = cursor
+
 	return nil
 }

@@ -2,16 +2,19 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/streamingfast/bstream"
+	"github.com/streamingfast/dgrpc"
 	pbtransform "github.com/streamingfast/firehose-ethereum/types/pb/sf/ethereum/transform/v1"
 	pbfirehose "github.com/streamingfast/pbgo/sf/firehose/v2"
 	"github.com/streamingfast/shutter"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/anypb"
 )
 
@@ -53,7 +56,7 @@ func (s *HeadFetcher) Start(refreshEach time.Duration) {
 
 	go func() {
 		if s.value.Load() == nil {
-			if err := s.Init(ctx); err != nil {
+			if err := s.Init(ctx); err != nil && !isCanceledError(err) {
 				zlog.Error("unable to fetch head block with retries, head block will be nil until then")
 			}
 		}
@@ -65,7 +68,7 @@ func (s *HeadFetcher) Start(refreshEach time.Duration) {
 			select {
 			case <-ticker.C:
 				headBlock, err := s.FetchHeadBlock(ctx)
-				if err != nil {
+				if err != nil && !isCanceledError(err) {
 					zlog.Error("unable to fetch head block with retries, head block will be nil until then")
 					continue
 				}
@@ -174,4 +177,8 @@ func (v *AtomicValue[T]) Swap(new T) (old T) {
 	} else {
 		return v.(T)
 	}
+}
+
+func isCanceledError(err error) bool {
+	return errors.Is(err, context.Canceled) || dgrpc.IsGRPCErrorCode(err, codes.Canceled)
 }
