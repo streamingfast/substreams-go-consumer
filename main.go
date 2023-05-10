@@ -246,7 +246,7 @@ func run(cmd *cobra.Command, args []string) error {
 						break
 					}
 
-					if err == io.EOF {
+					if errors.Is(err, io.EOF) {
 						stats.LogNow()
 						zlog.Info("completed")
 						return nil
