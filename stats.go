@@ -18,9 +18,6 @@ type Stats struct {
 
 	backprocessingCompletion *ValueFromMetric
 	headBlockReached         *ValueFromMetric
-
-	dataMsgRate     *RateFromCounter
-	progressMsgRate *RateFromCounter
 }
 
 func NewStats(stopBlock uint64, headFetcher *HeadFetcher) *Stats {
@@ -28,13 +25,9 @@ func NewStats(stopBlock uint64, headFetcher *HeadFetcher) *Stats {
 		Shutter:   shutter.New(),
 		stopBlock: stopBlock,
 
-		headFetcher: headFetcher,
-
+		headFetcher:              headFetcher,
 		backprocessingCompletion: NewValueFromMetric(BackprocessingCompletion, "completion"),
 		headBlockReached:         NewValueFromMetric(HeadBlockReached, "reached"),
-
-		dataMsgRate:     NewPerSecondAverageRateFromCounter(DataMessageCount, 30*time.Second, "msg"),
-		progressMsgRate: NewPerSecondAverageRateFromCounter(ProgressMessageCount, 30*time.Second, "msg"),
 	}
 }
 
@@ -63,18 +56,10 @@ func (s *Stats) Start(each time.Duration) {
 func (s *Stats) LogNow() {
 	// Logging fields order is important as it affects the final rendering, we carefully ordered
 	// them so the development logs looks nicer.
-	fields := []zap.Field{
-		zap.Stringer("data_msg_rate", s.dataMsgRate),
-		zap.Stringer("progress_msg_rate", s.progressMsgRate),
-	}
-
+	fields := []zap.Field{}
 	headBlock, headBlockFound := s.headFetcher.Current()
 
-	if s.lastBlock == nil {
-		fields = append(fields, zap.String("last_block", "None"))
-	} else {
-		fields = append(fields, zap.Stringer("last_block", s.lastBlock))
-
+	if s.lastBlock != nil {
 		toBlockNum := s.stopBlock
 		if s.stopBlock == 0 && headBlockFound {
 			toBlockNum = headBlock.Num()
@@ -85,7 +70,7 @@ func (s *Stats) LogNow() {
 			blockDiff = strconv.FormatUint(toBlockNum-s.lastBlock.Num(), 10)
 		}
 
-		zap.String("missing_block", blockDiff)
+		fields = append(fields, zap.String("missing_block", blockDiff))
 	}
 
 	if headBlockFound {
@@ -101,5 +86,6 @@ func (s *Stats) LogNow() {
 }
 
 func (s *Stats) Close() {
+	s.LogNow()
 	s.Shutdown(nil)
 }

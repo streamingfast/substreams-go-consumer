@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -10,7 +9,6 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/streamingfast/bstream"
 	pbtransform "github.com/streamingfast/firehose-ethereum/types/pb/sf/ethereum/transform/v1"
-	pbeth "github.com/streamingfast/firehose-ethereum/types/pb/sf/ethereum/type/v2"
 	pbfirehose "github.com/streamingfast/pbgo/sf/firehose/v2"
 	"github.com/streamingfast/shutter"
 	"go.uber.org/zap"
@@ -106,9 +104,10 @@ func (s *HeadFetcher) FetchHeadBlock(ctx context.Context) (ref bstream.BlockRef,
 }
 
 func (s *HeadFetcher) fetchHeadBlock(ctx context.Context) (ref bstream.BlockRef, err error) {
-	transform, err := anypb.New(&pbtransform.LightBlock{})
+	// FIXME: Transform per network would be required
+	transform, err := anypb.New(&pbtransform.HeaderOnly{})
 	if err != nil {
-		return ref, fmt.Errorf("light block transform to any: should never happen, message used here is always transformable to *anypb.Any")
+		return ref, fmt.Errorf("header only transform to any: should never happen, message used here is always transformable to *anypb.Any")
 	}
 
 	fetchCtx, cancelFetch := context.WithCancel(ctx)
@@ -131,14 +130,12 @@ func (s *HeadFetcher) fetchHeadBlock(ctx context.Context) (ref bstream.BlockRef,
 		}
 
 		if response.Step == pbfirehose.ForkStep_STEP_NEW {
-			// FIXME: Works only on Ethereum models!
-			var block pbeth.Block
-			if err := response.Block.UnmarshalTo(&block); err != nil {
-				// No retry there is something fishy so we return right away
-				return bstream.BlockRefEmpty, backoff.Permanent(fmt.Errorf("unable to read Ethereum block: %w", err))
+			cursor, err := bstream.CursorFromOpaque(response.Cursor)
+			if err != nil {
+				return ref, fmt.Errorf("invalid received cursor (maybe you have an outdated 'github.com/streamingfast/bstream' dependency?): %w", err)
 			}
 
-			return bstream.NewBlockRef(hex.EncodeToString(block.Hash), block.Number), nil
+			return bstream.NewBlockRef(cursor.Block.ID(), cursor.Block.Num()), nil
 		}
 	}
 }

@@ -53,7 +53,7 @@ func NewFirehoseClient(config *FirehoseClientConfig) (cli pbfirehose.StreamClien
 		grpc.WithStreamInterceptor(otelgrpc.StreamClientInterceptor()),
 	)
 
-	if config.JWT != "" {
+	if config.JWT != "" && !config.PlainText {
 		logger.Debug("creating oauth access")
 		dialOptions = append(dialOptions, grpc.WithPerRPCCredentials(oauth.NewOauthAccess(&oauth2.Token{
 			AccessToken: config.JWT,

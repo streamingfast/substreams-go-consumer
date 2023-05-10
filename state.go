@@ -93,40 +93,46 @@ func (s *StateStore) Start(each time.Duration) {
 		for {
 			select {
 			case <-ticker.C:
-				zlog.Debug("saving cursor to output path", zap.String("output_path", s.outputPath))
-				cursor, block, backprocessCompleted, headBlockReached := s.fetcher()
-
-				s.state.Cursor = cursor
-				s.state.Block.ID = block.ID()
-				s.state.Block.Number = block.Num()
-				s.state.LastSyncedAt = time.Now().Local()
-
-				if backprocessCompleted && s.state.BackprocessingCompletedAt.IsZero() {
-					s.state.BackprocessingCompletedAt = s.state.LastSyncedAt
-					s.state.BackprocessingDuration = s.state.BackprocessingCompletedAt.Sub(s.state.StartedAt)
-				}
-
-				if headBlockReached && s.state.HeadBlockReachedAt.IsZero() {
-					s.state.HeadBlockReachedAt = s.state.LastSyncedAt
-					s.state.HeadBlockReachedDuration = s.state.HeadBlockReachedAt.Sub(s.state.StartedAt)
-				}
-
-				content, err := yaml.Marshal(s.state)
-				if err != nil {
-					s.Shutdown(fmt.Errorf("unable to marshal state: %w", err))
-					return
-				}
-
-				if err := os.WriteFile(s.outputPath, content, os.ModePerm); err != nil {
-					s.Shutdown(fmt.Errorf("unable to write state file: %w", err))
-					return
+				if err := s.SyncNow(); err != nil {
+					s.Shutdown(err)
 				}
 
 			case <-s.Terminating():
-				break
+				return
 			}
 		}
 	}()
+}
+
+func (s *StateStore) SyncNow() error {
+	zlog.Debug("saving cursor to output path", zap.String("output_path", s.outputPath))
+	cursor, block, backprocessCompleted, headBlockReached := s.fetcher()
+
+	s.state.Cursor = cursor
+	s.state.Block.ID = block.ID()
+	s.state.Block.Number = block.Num()
+	s.state.LastSyncedAt = time.Now().Local()
+
+	if backprocessCompleted && s.state.BackprocessingCompletedAt.IsZero() {
+		s.state.BackprocessingCompletedAt = s.state.LastSyncedAt
+		s.state.BackprocessingDuration = s.state.BackprocessingCompletedAt.Sub(s.state.StartedAt)
+	}
+
+	if headBlockReached && s.state.HeadBlockReachedAt.IsZero() {
+		s.state.HeadBlockReachedAt = s.state.LastSyncedAt
+		s.state.HeadBlockReachedDuration = s.state.HeadBlockReachedAt.Sub(s.state.StartedAt)
+	}
+
+	content, err := yaml.Marshal(s.state)
+	if err != nil {
+		return fmt.Errorf("unable to marshal state: %w", err)
+	}
+
+	if err := os.WriteFile(s.outputPath, content, os.ModePerm); err != nil {
+		return fmt.Errorf("unable to write state file: %w", err)
+	}
+
+	return nil
 }
 
 type syncState struct {
@@ -151,5 +157,7 @@ type blockState struct {
 }
 
 func (s *StateStore) Close() {
-	s.Shutdown(nil)
+	// There is a slight chance of race with the loop ticker, but let's hope it will never break the file
+	// FIXME: Maybe dangerous?
+	s.Shutdown(s.SyncNow())
 }

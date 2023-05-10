@@ -2,28 +2,20 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
-	"math"
-	"os"
-	"strconv"
-	"strings"
 	"time"
 
-	"github.com/cenkalti/backoff/v4"
-	"github.com/golang/protobuf/proto"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"github.com/streamingfast/bstream"
 	"github.com/streamingfast/cli"
 	. "github.com/streamingfast/cli"
+	"github.com/streamingfast/cli/sflags"
 	"github.com/streamingfast/logging"
 	"github.com/streamingfast/shutter"
-	"github.com/streamingfast/substreams/client"
-	"github.com/streamingfast/substreams/manifest"
-	pbsubstreams "github.com/streamingfast/substreams/pb/sf/substreams/v1"
+	sink "github.com/streamingfast/substreams-sink"
+	pbsubstreamsrpc "github.com/streamingfast/substreams/pb/sf/substreams/rpc/v2"
 	"go.uber.org/zap"
 )
 
@@ -47,15 +39,12 @@ func main() {
 		ConfigureViper("CONSUMER"),
 		RangeArgs(3, 4),
 		Flags(func(flags *pflag.FlagSet) {
-			flags.StringP("api-token", "a", "", "API Token to use for Substreams authentication, SUBSTREAMS_API_TOKEN is automatically checked also")
-			flags.BoolP("insecure", "k", false, "Skip certificate validation on GRPC connection")
-			flags.BoolP("plaintext", "p", false, "Establish GRPC connection in plaintext")
-			flags.Bool("production-mode", false, "Enables production store")
-			flags.DurationP("frequency", "f", 15*time.Second, "At which interval of time we should print statistics locally extracted from Prometheus")
+			sink.AddFlagsToSet(flags, sink.FlagIgnore(sink.FlagIrreversibleOnly))
+
 			flags.BoolP("clean", "c", false, "Do not read existing state from cursor state file and start from scratch instead")
+			flags.DurationP("frequency", "f", 15*time.Second, "At which interval of time we should print statistics locally extracted from Prometheus")
 			flags.String("state-store", "./state.yaml", "Output path where to store latest received cursor, if empty, cursor will not be persisted")
 			flags.String("api-listen-addr", ":8080", "Rest API to manage consumer")
-			flags.BoolP("irreversible-only", "i", false, "Only deal with irreversible blocks (a.k.a final) avoiding live blocks")
 		}),
 		PersistentFlags(func(flags *pflag.FlagSet) {
 			flags.String("metrics-listen-addr", ":9102", "If non-empty, the process will listen on this address to server Prometheus metrics")
@@ -78,93 +67,56 @@ func run(cmd *cobra.Command, args []string) error {
 	endpoint := args[0]
 	manifestPath := args[1]
 	moduleName := args[2]
-	blockRange := ""
+	blockRangeArg := ""
 	if len(args) > 3 {
-		blockRange = args[3]
+		blockRangeArg = args[3]
 	}
 
-	irreversibleOnly := viper.GetBool("irreversible-only")
-	cleanState := viper.GetBool("clean")
-	stateStorePath := viper.GetString("state-store")
-	productionMode := viper.GetBool("production-mode")
+	baseSinker, err := sink.NewFromViper(cmd, sink.IgnoreOutputModuleType, endpoint, manifestPath, moduleName, blockRangeArg, zlog, tracer,
+		sink.WithBlockDataBuffer(0),
+	)
+	cli.NoError(err, "Unable to create sinker")
 
-	apiListenAddr := viper.GetString("api-listen-addr")
+	sinker := &Sinker{Sinker: baseSinker}
+
+	apiListenAddr := sflags.MustGetString(cmd, "api-listen-addr")
+	cleanState := sflags.MustGetBool(cmd, "clean")
+	stateStorePath := sflags.MustGetString(cmd, "state-store")
+	blockRange := sinker.BlockRange()
 
 	zlog.Info("consuming substreams",
 		zap.String("endpoint", endpoint),
 		zap.String("manifest_path", manifestPath),
 		zap.String("module_name", moduleName),
-		zap.String("block_range", blockRange),
-		zap.Bool("clean_state", cleanState),
-		zap.Bool("production_mode", productionMode),
+		zap.Stringer("block_range", blockRange),
 		zap.String("cursor_store_path", stateStorePath),
-		zap.Bool("irreversible_only", irreversibleOnly),
 		zap.String("manage_listen_addr", apiListenAddr),
 	)
 
-	manifestReader := manifest.NewReader(manifestPath)
-	pkg, err := manifestReader.Read()
-	cli.NoError(err, "Read Substreams manifest")
+	firehoseConfig := &FirehoseClientConfig{JWT: sinker.ApiToken()}
+	firehoseConfig.Endpoint, firehoseConfig.PlainText, firehoseConfig.Insecure = sinker.EndpointConfig()
 
-	graph, err := manifest.NewModuleGraph(pkg.Modules.Modules)
-	cli.NoError(err, "Create Substreams module graph")
-
-	recordEntityChange := false
-
-	resolvedStartBlock := int64(math.MaxInt64)
-	resolvedStopBlock := uint64(0)
-
-	module, err := graph.Module(moduleName)
-	cli.NoError(err, "Unable to get module")
-
-	if module.GetKindMap() == nil {
-		return fmt.Errorf("output module %q is not of type  'Map'", moduleName)
-	}
-
-	startBlock, stopBlock, err := readBlockRange(module, blockRange)
-	cli.NoError(err, "Unable to read block range")
-
-	if startBlock < resolvedStartBlock {
-		resolvedStartBlock = startBlock
-	}
-	if stopBlock > resolvedStopBlock {
-		resolvedStopBlock = stopBlock
-	}
-
-	zlog.Info("resolved block range", zap.Int64("start_block", resolvedStartBlock), zap.Uint64("stop_block", resolvedStopBlock))
-
-	apiToken := readAPIToken()
-
-	substreamsClientConfig := client.NewSubstreamsClientConfig(
-		endpoint,
-		apiToken,
-		viper.GetBool("insecure"),
-		viper.GetBool("plaintext"),
-	)
-
-	ssClient, connClose, callOpts, err := client.NewSubstreamsClient(substreamsClientConfig)
-	cli.NoError(err, "Unable to create substreams client")
-	defer connClose()
-
-	firehoseClient, firehoseClose, err := NewFirehoseClient(&FirehoseClientConfig{Endpoint: endpoint, JWT: apiToken, Insecure: viper.GetBool("insecure"), PlainText: viper.GetBool("plaintext")})
-	cli.NoError(err, "Unable to create fire`hose client")
+	firehoseClient, firehoseClose, err := NewFirehoseClient(firehoseConfig)
+	cli.NoError(err, "Unable to create firehose client")
 	defer firehoseClose()
 
 	headFetcher := NewHeadFetcher(firehoseClient)
 	app.OnTerminating(func(_ error) { headFetcher.Close() })
 	headFetcher.OnTerminated(func(err error) { app.Shutdown(err) })
 
-	stats := NewStats(resolvedStopBlock, headFetcher)
+	sinker.headFetcher = headFetcher
+
+	stopBlock := uint64(0)
+	if blockRange != nil && blockRange.EndBlock() != nil {
+		stopBlock = *blockRange.EndBlock()
+	}
+
+	stats := NewStats(stopBlock, headFetcher)
 	app.OnTerminating(func(_ error) { stats.Close() })
 	stats.OnTerminated(func(err error) { app.Shutdown(err) })
 
-	activeCursor := ""
-	activeBlock := bstream.BlockRefEmpty
-	backprocessingCompleted := false
-	headBlockReached := false
-
 	stateStore := NewStateStore(stateStorePath, func() (string, bstream.BlockRef, bool, bool) {
-		return activeCursor, activeBlock, backprocessingCompleted, headBlockReached
+		return sinker.activeCursor, sinker.activeBlock, sinker.backprocessingCompleted, sinker.headBlockReached
 	})
 	app.OnTerminating(func(_ error) { stateStore.Close() })
 	stateStore.OnTerminated(func(err error) { app.Shutdown(err) })
@@ -181,300 +133,110 @@ func run(cmd *cobra.Command, args []string) error {
 	go managementApi.Launch()
 
 	if !cleanState {
-		activeCursor, activeBlock, err = stateStore.Read()
+		sinker.activeCursor, sinker.activeBlock, err = stateStore.Read()
 		cli.NoError(err, "Unable to read state store")
 	}
 
 	zlog.Info("client configured",
-		zap.Bool("record_entity_change", recordEntityChange),
-		zap.Int64("start_block", resolvedStartBlock),
-		zap.Bool("production_mode", productionMode),
-		zap.Uint64("stop_block", resolvedStopBlock),
 		zap.String("output_module_name", moduleName),
-		zap.Stringer("active_block", activeBlock),
-		zap.String("active_cursor", activeCursor),
+		zap.Stringer("active_block", sinker.activeBlock),
+		zap.String("active_cursor", sinker.activeCursor),
 	)
 
 	stats.Start(viper.GetDuration("frequency"))
 	headFetcher.Start(1 * time.Minute)
 	stateStore.Start(30 * time.Second)
 
-	// We will wait at max approximatively 5m before diying
-	backOff := backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 15), ctx)
-	forkSteps := []pbsubstreams.ForkStep{pbsubstreams.ForkStep_STEP_NEW, pbsubstreams.ForkStep_STEP_UNDO}
-	if irreversibleOnly {
-		forkSteps = []pbsubstreams.ForkStep{pbsubstreams.ForkStep_STEP_IRREVERSIBLE}
+	app.OnTerminating(func(_ error) { sinker.Shutdown(nil) })
+	sinker.OnTerminating(func(err error) {
+		app.Shutdown(err)
+	})
+
+	go sinker.Run(ctx)
+
+	zlog.Info("ready, waiting for signal to quit")
+
+	signalHandler, isSignaled, _ := cli.SetupSignalHandler(0*time.Second, zlog)
+	select {
+	case <-signalHandler:
+		go app.Shutdown(nil)
+		break
+	case <-app.Terminating():
+		zlog.Info("run terminating", zap.Bool("from_signal", isSignaled.Load()), zap.Bool("with_error", app.Err() != nil))
+		break
 	}
 
-	for {
-		var lastErr error
-
-		zlog.Info("request info",
-			zap.Int64("start_block", resolvedStartBlock),
-			zap.Strings("fork_steps", forkStepsToStrings(forkSteps)),
-			zap.Int("module_count", len(pkg.Modules.Modules)),
-			zap.String("output_module_name", moduleName),
-		)
-
-		req := &pbsubstreams.Request{
-			StartBlockNum:  resolvedStartBlock,
-			StartCursor:    activeCursor,
-			StopBlockNum:   resolvedStopBlock,
-			ForkSteps:      forkSteps,
-			ProductionMode: productionMode,
-			Modules:        pkg.Modules,
-			OutputModules:  []string{moduleName},
-		}
-
-		err = pbsubstreams.ValidateRequest(req)
-		cli.NoError(err, "Invalid built Substreams request")
-
-		zlog.Info("connecting...")
-		cli, err := ssClient.Blocks(ctx, req, callOpts...)
-
-		if err != nil {
-			lastErr = fmt.Errorf("call sf.substreams.v1.Stream/Blocks: %w", err)
-		} else {
-			zlog.Info("connected")
-			checkFirstBlock := true
-
-			for {
-				resp, err := cli.Recv()
-				if err != nil {
-					if errors.Is(err, context.Canceled) {
-						zlog.Debug("context cancelled, terminating work")
-						break
-					}
-
-					if errors.Is(err, io.EOF) {
-						stats.LogNow()
-						zlog.Info("completed")
-						return nil
-					}
-
-					lastErr = err
-					break
-				}
-
-				// We receive one message, we are goog to
-				backOff.Reset()
-
-				if resp != nil {
-					MessageSizeBytes.AddInt(proto.Size(resp))
-
-					if session := resp.GetSession(); session != nil {
-						zlog.Info("session initialized", zap.String("trace_id", session.TraceId))
-						continue
-					}
-
-					if progress := resp.GetProgress(); progress != nil {
-						processProgressMessage(progress)
-						continue
-					}
-
-					if data := resp.GetData(); data != nil {
-						block := bstream.NewBlockRef(data.Clock.Id, data.Clock.Number)
-
-						if checkFirstBlock {
-							if !bstream.EqualsBlockRefs(activeBlock, bstream.BlockRefEmpty) {
-								zlog.Info("checking first received block",
-									zap.Stringer("block_at_cursor", activeBlock),
-									zap.Stringer("first_block", block),
-								)
-
-								// Correct check would be using parent/child relationship, if the clock had
-								// information about the parent block right there, we could validate that active block
-								// is actually the parent of first received block. For now, let's ensure we have a following
-								// block (will not work on network's that can skip block's num like NEAR or Solana).
-								if block.Num()-1 != activeBlock.Num() {
-									app.Shutdown(fmt.Errorf("block continuity on first block after restarting from cursor does not follow"))
-									break
-								}
-							}
-
-							checkFirstBlock = false
-						}
-
-						processDataMessage(data, graph, recordEntityChange)
-
-						stats.lastBlock = block
-
-						activeCursor = data.Cursor
-						activeBlock = block
-						backprocessingCompleted = true
-
-						chainHeadBlock, found := headFetcher.Current()
-						if found && data.Clock.Number >= chainHeadBlock.Num() {
-							headBlockReached = true
-							HeadBlockReached.SetUint64(1)
-						}
-
-						continue
-					}
-
-					UnknownMessageCount.Inc()
-				}
-			}
-		}
-
-		if app.IsTerminating() {
-			break
-		}
-
-		if lastErr != nil {
-			SubstreamsErrorCount.Inc()
-			zlog.Error("substreams encountered an error", zap.Error(lastErr))
-
-			sleepFor := backOff.NextBackOff()
-			if sleepFor == backoff.Stop {
-				zlog.Info("backoff requested to stop retries")
-				return lastErr
-			}
-
-			zlog.Info("sleeping before re-connecting", zap.Duration("sleep", sleepFor))
-			time.Sleep(sleepFor)
-		}
+	zlog.Info("waiting for run termination")
+	select {
+	case <-app.Terminated():
+	case <-time.After(30 * time.Second):
+		zlog.Warn("application did not terminate within 30s")
 	}
 
-	<-app.Terminated()
-	return app.Err()
+	if err := app.Err(); err != nil {
+		return err
+	}
+
+	zlog.Info("run terminated gracefully")
+	return nil
 }
 
-func processProgressMessage(progress *pbsubstreams.ModulesProgress) {
-	if tracer.Enabled() {
-		zlog.Debug("progress message received", zap.Reflect("progress", progress))
-	}
+type Sinker struct {
+	*sink.Sinker
 
-	for _, module := range progress.Modules {
-		ProgressMessageCount.Inc(module.Name)
+	headFetcher *HeadFetcher
 
-		if processedRanges := module.GetProcessedRanges(); processedRanges != nil {
-			latestEndBlock := uint64(0)
-			for _, processedRange := range processedRanges.ProcessedRanges {
-				if processedRange.EndBlock > latestEndBlock {
-					latestEndBlock = processedRange.EndBlock
-				}
-			}
-
-			ModuleProgressBlock.SetUint64(latestEndBlock, module.Name)
-		}
-	}
+	activeCursor            string
+	activeBlock             bstream.BlockRef
+	checkFirstBlock         bool
+	headBlockReached        bool
+	backprocessingCompleted bool
 }
 
-func processDataMessage(data *pbsubstreams.BlockScopedData, _ *manifest.ModuleGraph, _ bool) {
+func (s *Sinker) Run(ctx context.Context) {
+	s.Sinker.Run(ctx, sink.MustNewCursor(s.activeCursor), s)
+}
+
+func (s *Sinker) HandleBlockScopedData(ctx context.Context, data *pbsubstreamsrpc.BlockScopedData, isLive *bool, cursor *sink.Cursor) error {
 	if tracer.Enabled() {
 		zlog.Debug("data message received", zap.Reflect("data", data))
 	}
 
-	BackprocessingCompletion.SetUint64(1)
-	HeadBlockNumber.SetUint64(data.Clock.Number)
-	HeadBlockTime.SetBlockTime(data.Clock.Timestamp.AsTime())
+	block := bstream.NewBlockRef(data.Clock.Id, data.Clock.Number)
 
-	if data.Step == pbsubstreams.ForkStep_STEP_NEW {
-		StepNewCount.Inc()
-	} else if data.Step == pbsubstreams.ForkStep_STEP_UNDO {
-		StepUndoCount.Inc()
-	}
+	if s.checkFirstBlock {
+		if !bstream.EqualsBlockRefs(s.activeBlock, bstream.BlockRefEmpty) {
+			zlog.Info("checking first received block",
+				zap.Stringer("block_at_cursor", s.activeBlock),
+				zap.Stringer("first_block", block),
+			)
 
-	for _, output := range data.Outputs {
-		DataMessageCount.Inc(output.Name)
-
-		if data := output.GetData(); data != nil {
-			OutputMapperCount.Inc(output.Name)
-			OutputMapperSizeBytes.AddInt(proto.Size(output), output.Name)
-
-			// FIXME: Do we want to actually decode the type to get out the amount of data extracted?
-			// if recordEntityChange && output.Name == "graph_out" {
-			// 	// if output, found := moduleOutputType(output, graph); found && output.TypeName() == "proto:network.types.v1.EntitiesChanges" {
-			// 	// }
-			// }
-
-			continue
+			// Correct check would be using parent/child relationship, if the clock had
+			// information about the parent block right there, we could validate that active block
+			// is actually the parent of first received block. For now, let's ensure we have a following
+			// block (will not work on network's that can skip block's num like NEAR or Solana).
+			if block.Num()-1 != s.activeBlock.Num() {
+				return fmt.Errorf("block continuity on first block after restarting from cursor does not follow")
+			}
 		}
 
-		//if storeDeltas := output.GetStoreDeltas(); storeDeltas != nil {
-		//	OutputStoreDeltasCount.AddInt(len(storeDeltas.Deltas), output.Name)
-		//	OutputStoreDeltaSizeBytes.AddInt(proto.Size(output), output.Name)
-		//}
+		s.checkFirstBlock = false
 	}
+
+	s.activeBlock = block
+	s.activeCursor = cursor.String()
+	s.backprocessingCompleted = true
+
+	chainHeadBlock, found := s.headFetcher.Current()
+	if found && block.Num() >= chainHeadBlock.Num() {
+		s.headBlockReached = true
+		HeadBlockReached.SetUint64(1)
+	}
+
+	return nil
 }
 
-// func moduleOutputType(output *pbsubstreams.ModuleOutput, graph *manifest.ModuleGraph) (moduleOutput *ModuleOutput, found bool) {
-// 	module, err := graph.Module(output.Name)
-// 	if err != nil {
-// 		// There is only one kind of error in the `Module` implementation, when the module is not found, hopefully it stays
-// 		// like that forever!
-// 		return nil, false
-// 	}
-
-// 	return (*ModuleOutput)(module.Output), module.Output != nil
-// }
-
-func readAPIToken() string {
-	apiToken := viper.GetString("api-token")
-	if apiToken != "" {
-		return apiToken
-	}
-
-	apiToken = os.Getenv("SUBSTREAMS_API_TOKEN")
-	if apiToken != "" {
-		return apiToken
-	}
-
-	return os.Getenv("SF_API_TOKEN")
-}
-
-func readBlockRange(module *pbsubstreams.Module, input string) (start int64, stop uint64, err error) {
-	if input == "" {
-		input = "-1"
-	}
-
-	before, after, found := strings.Cut(input, ":")
-
-	beforeRelative := strings.HasPrefix(before, "+")
-	beforeInt64, err := strconv.ParseInt(strings.TrimPrefix(before, "+"), 0, 64)
-	if err != nil {
-		return 0, 0, fmt.Errorf("invalid block number value %q: %w", before, err)
-	}
-
-	afterRelative := false
-	afterInt64 := int64(0)
-	if found {
-		afterRelative = strings.HasPrefix(after, "+")
-		afterInt64, err = strconv.ParseInt(after, 0, 64)
-		if err != nil {
-			return 0, 0, fmt.Errorf("invalid block number value %q: %w", after, err)
-		}
-	}
-
-	// If there is no `:` we assume it's a stop block value right away
-	if !found {
-		start = int64(module.InitialBlock)
-		stop = uint64(resolveBlockNumber(beforeInt64, 0, beforeRelative, uint64(start)))
-	} else {
-		start = resolveBlockNumber(beforeInt64, int64(module.InitialBlock), beforeRelative, module.InitialBlock)
-		stop = uint64(resolveBlockNumber(afterInt64, 0, afterRelative, uint64(start)))
-	}
-
-	return
-}
-
-func resolveBlockNumber(value int64, ifMinus1 int64, relative bool, against uint64) int64 {
-	if !relative {
-		if value < 0 {
-			return ifMinus1
-		}
-
-		return value
-	}
-
-	return int64(against) + value
-}
-
-func forkStepsToStrings(steps []pbsubstreams.ForkStep) (out []string) {
-	out = make([]string, len(steps))
-	for i, step := range steps {
-		out[i] = strings.ToLower(strings.Replace(step.String(), "STEP_", "", 1))
-	}
-	return
+func (s *Sinker) HandleBlockUndoSignal(ctx context.Context, undoSignal *pbsubstreamsrpc.BlockUndoSignal, cursor *sink.Cursor) error {
+	s.activeBlock = bstream.NewBlockRef(undoSignal.LastValidBlock.Id, undoSignal.LastValidBlock.Number)
+	return nil
 }
