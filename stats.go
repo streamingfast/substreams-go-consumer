@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/streamingfast/bstream"
+	"github.com/streamingfast/dmetrics"
 	"github.com/streamingfast/shutter"
 	"go.uber.org/zap"
 )
@@ -16,8 +17,8 @@ type Stats struct {
 	lastBlock   bstream.BlockRef
 	stopBlock   uint64
 
-	backprocessingCompletion *ValueFromMetric
-	headBlockReached         *ValueFromMetric
+	backprocessingCompletion *dmetrics.ValueFromMetric
+	headBlockReached         *dmetrics.ValueFromMetric
 }
 
 func NewStats(stopBlock uint64, headFetcher *HeadFetcher) *Stats {
@@ -26,8 +27,8 @@ func NewStats(stopBlock uint64, headFetcher *HeadFetcher) *Stats {
 		stopBlock: stopBlock,
 
 		headFetcher:              headFetcher,
-		backprocessingCompletion: NewValueFromMetric(BackprocessingCompletion, "completion"),
-		headBlockReached:         NewValueFromMetric(HeadBlockReached, "reached"),
+		backprocessingCompletion: dmetrics.NewValueFromMetric(BackprocessingCompletion, "completion"),
+		headBlockReached:         dmetrics.NewValueFromMetric(HeadBlockReached, "reached"),
 	}
 }
 
