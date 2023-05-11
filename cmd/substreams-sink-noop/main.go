@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/cenkalti/backoff"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -18,13 +19,13 @@ import (
 	"go.uber.org/zap"
 )
 
-var zlog, tracer = logging.ApplicationLogger("consumer", "github.com/streamingfast/substreams-consumer",
+var zlog, tracer = logging.ApplicationLogger("sink-noop", "github.com/streamingfast/substreams-sink-noop",
 	logging.WithConsoleToStderr(),
 )
 
 func main() {
 	Run(
-		"substreams-consumer <endpoint> <manifest> <module> [<start>:<stop>]",
+		"substreams-sink-noop <endpoint> <manifest> <module> [<start>:<stop>]",
 		"Consumes the given Substreams manifest against the endpoint optionally within a range of blocks",
 		Execute(run),
 		Description(`
@@ -33,9 +34,9 @@ func main() {
 			The <endpoint> argument must always have its port defined.
 		`),
 		Example(`
-			substreams-consumer mainnet.eth.streamingfast.io:443 ethereum-network-v1-v0.1.0.spkg graph_out +1000
+			substreams-sink-noop mainnet.eth.streamingfast.io:443 ethereum-network-v1-v0.1.0.spkg graph_out +1000
 		`),
-		ConfigureViper("CONSUMER"),
+		ConfigureViper("SINK_NOOP"),
 		RangeArgs(3, 4),
 		Flags(func(flags *pflag.FlagSet) {
 			sink.AddFlagsToSet(flags, sink.FlagIgnore(sink.FlagIrreversibleOnly))
@@ -48,7 +49,7 @@ func main() {
 			flags.BoolP("clean", "c", false, "Do not read existing state from cursor state file and start from scratch instead")
 			flags.DurationP("frequency", "f", frequencyDefault, "At which interval of time we should print statistics locally extracted from Prometheus")
 			flags.String("state-store", "./state.yaml", "Output path where to store latest received cursor, if empty, cursor will not be persisted")
-			flags.String("api-listen-addr", ":8080", "Rest API to manage consumer")
+			flags.String("api-listen-addr", ":8080", "Rest API to manage deployment")
 		}),
 		PersistentFlags(func(flags *pflag.FlagSet) {
 			flags.String("metrics-listen-addr", ":9102", "If non-empty, the process will listen on this address to server Prometheus metrics")
@@ -78,6 +79,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	baseSinker, err := sink.NewFromViper(cmd, sink.IgnoreOutputModuleType, endpoint, manifestPath, moduleName, blockRangeArg, zlog, tracer,
 		sink.WithBlockDataBuffer(0),
+		sink.WithRetryBackOff(backoff.NewConstantBackOff(10*time.Second)),
 	)
 	cli.NoError(err, "Unable to create sinker")
 

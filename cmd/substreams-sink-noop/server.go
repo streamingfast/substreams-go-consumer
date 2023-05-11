@@ -1,10 +1,11 @@
 package main
 
 import (
+	"net/http"
+
 	"github.com/gorilla/mux"
 	"github.com/streamingfast/shutter"
 	"go.uber.org/zap"
-	"net/http"
 )
 
 type Manager struct {
@@ -33,7 +34,7 @@ func (m *Manager) cancelResetState(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Manager) shutdown(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("shutting down consumer\n"))
+	w.Write([]byte("shutting down deployment\n"))
 	m.Shutdown(nil)
 }
 
@@ -44,8 +45,8 @@ func (s *Manager) Launch() {
 	coreRouter.HandleFunc("/healthz", func(writer http.ResponseWriter, request *http.Request) {
 		writer.Write([]byte("ok\n"))
 	})
-	coreRouter.HandleFunc("/resetstate", s.resetState).Methods("POST")
-	coreRouter.HandleFunc("/cancelresetstate", s.cancelResetState).Methods("POST")
+	coreRouter.HandleFunc("/reset_state", s.resetState).Methods("POST")
+	coreRouter.HandleFunc("/cancel_reset_state", s.cancelResetState).Methods("POST")
 	coreRouter.HandleFunc("/shutdown", s.shutdown).Methods("POST")
 
 	httpServer := &http.Server{

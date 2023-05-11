@@ -1,0 +1,4 @@
+global:
+  binary: substreams-sink-noop
+  language: golang
+  variant: application

@@ -83,7 +83,7 @@ func (s *Stats) LogNow() {
 		zap.Bool("head_block_reached", s.headBlockReached.ValueUint() > 0),
 	)
 
-	zlog.Info("substreams consumer stats", fields...)
+	zlog.Info("substreams sink noop stats", fields...)
 }
 
 func (s *Stats) Close() {
