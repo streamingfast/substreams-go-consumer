@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/cenkalti/backoff"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -79,7 +78,6 @@ func run(cmd *cobra.Command, args []string) error {
 
 	baseSinker, err := sink.NewFromViper(cmd, sink.IgnoreOutputModuleType, endpoint, manifestPath, moduleName, blockRangeArg, zlog, tracer,
 		sink.WithBlockDataBuffer(0),
-		sink.WithRetryBackOff(backoff.NewConstantBackOff(10*time.Second)),
 	)
 	cli.NoError(err, "Unable to create sinker")
 
