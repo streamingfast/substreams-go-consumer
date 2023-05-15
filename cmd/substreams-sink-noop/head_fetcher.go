@@ -73,7 +73,10 @@ func (s *HeadFetcher) Start(refreshEach time.Duration) {
 					continue
 				}
 
-				s.value.Store(headBlock)
+				// Could be a canceled error, in which case we must not store the headBlock since it's nil
+				if err == nil {
+					s.value.Store(headBlock)
+				}
 			case <-s.Terminating():
 				return
 			}

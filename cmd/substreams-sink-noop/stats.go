@@ -88,5 +88,6 @@ func (s *Stats) LogNow() {
 
 func (s *Stats) Close() {
 	s.LogNow()
+
 	s.Shutdown(nil)
 }
