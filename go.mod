@@ -11,13 +11,13 @@ require (
 	github.com/streamingfast/bstream v0.0.2-0.20230407143220-06c919ae8476
 	github.com/streamingfast/cli v0.0.4-0.20230508203625-ecd532feb120
 	github.com/streamingfast/dgrpc v0.0.0-20230417152409-2ee737f143dd
-	github.com/streamingfast/dmetrics v0.0.0-20230515151916-39e93cd589a5
+	github.com/streamingfast/dmetrics v0.0.0-20230516031116-28fcfeb4b9ed
 	github.com/streamingfast/firehose-ethereum/types v0.0.0-20230509180106-368e4933d2b7
 	github.com/streamingfast/logging v0.0.0-20221209193439-bff11742bf4c
 	github.com/streamingfast/pbgo v0.0.6-0.20220630154121-2e8bba36234e
 	github.com/streamingfast/shutter v1.5.0
 	github.com/streamingfast/substreams v1.0.2-0.20230418195519-fa17a36fd728
-	github.com/streamingfast/substreams-sink v0.2.5-0.20230515164611-045105b2843d
+	github.com/streamingfast/substreams-sink v0.2.5-0.20230516031352-e938ce577251
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.36.4
 	go.uber.org/zap v1.21.0
 	golang.org/x/oauth2 v0.6.0
@@ -107,3 +107,7 @@ require (
 	google.golang.org/genproto v0.0.0-20230320184635-7606e756e683 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 )
+
+replace github.com/streamingfast/substreams-sink => /Users/maoueh/work/sf/substreams-sink
+
+replace github.com/streamingfast/dmetrics => /Users/maoueh/work/sf/dmetrics
