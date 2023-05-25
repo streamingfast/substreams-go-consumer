@@ -12,7 +12,7 @@ Install the binary:
 
 - From a pre-compiled release at https://github.com/streamingfast/substreams-sink-noop/releases
 - On MacOS use `brew install streamingfast/tap/substreams-sink-noop`
-- From source if you have Golang installed with `go install github.com/streamingfast/substreams-sink-noop@latest`
+- From source if you have Golang installed with `go install github.com/streamingfast/substreams-sink-noop/cmd/substreams-sink-noop@latest`
 
 ```bash
 substreams-sink-noop mainnet.eth.streamingfast.io:443 https://github.com/streamingfast/substreams-eth-block-meta/releases/download/v0.4.1/substreams-eth-block-meta-v0.4.1.spkg graph_out
