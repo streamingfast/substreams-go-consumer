@@ -8,7 +8,7 @@ require (
 	github.com/spf13/cobra v1.6.1
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.15.0
-	github.com/streamingfast/bstream v0.0.2-0.20230407143220-06c919ae8476
+	github.com/streamingfast/bstream v0.0.2-0.20230510131449-6b591d74130d
 	github.com/streamingfast/cli v0.0.4-0.20230508203625-ecd532feb120
 	github.com/streamingfast/dgrpc v0.0.0-20230417152409-2ee737f143dd
 	github.com/streamingfast/dmetrics v0.0.0-20230516031116-28fcfeb4b9ed
@@ -16,8 +16,8 @@ require (
 	github.com/streamingfast/logging v0.0.0-20221209193439-bff11742bf4c
 	github.com/streamingfast/pbgo v0.0.6-0.20220630154121-2e8bba36234e
 	github.com/streamingfast/shutter v1.5.0
-	github.com/streamingfast/substreams v1.0.2-0.20230418195519-fa17a36fd728
-	github.com/streamingfast/substreams-sink v0.2.5-0.20230516031352-e938ce577251
+	github.com/streamingfast/substreams v1.1.3-0.20230517210915-91fa4e7a11ef
+	github.com/streamingfast/substreams-sink v0.2.5
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.36.4
 	go.uber.org/zap v1.21.0
 	golang.org/x/oauth2 v0.6.0
@@ -34,7 +34,7 @@ require (
 	cloud.google.com/go/storage v1.30.1 // indirect
 	github.com/Azure/azure-pipeline-go v0.2.3 // indirect
 	github.com/Azure/azure-storage-blob-go v0.14.0 // indirect
-	github.com/aws/aws-sdk-go v1.44.187 // indirect
+	github.com/aws/aws-sdk-go v1.44.233 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blendle/zapdriver v1.3.1 // indirect
 	github.com/bobg/go-generics/v2 v2.1.1 // indirect
@@ -76,6 +76,7 @@ require (
 	github.com/prometheus/client_model v0.2.0 // indirect
 	github.com/prometheus/common v0.32.1 // indirect
 	github.com/prometheus/procfs v0.7.3 // indirect
+	github.com/schollz/closestmatch v2.1.0+incompatible // indirect
 	github.com/sethvargo/go-retry v0.2.3 // indirect
 	github.com/spf13/afero v1.9.3 // indirect
 	github.com/spf13/cast v1.5.0 // indirect
@@ -83,7 +84,7 @@ require (
 	github.com/streamingfast/atm v0.0.0-20220131151839-18c87005e680 // indirect
 	github.com/streamingfast/dbin v0.0.0-20210809205249-73d5eca35dc5 // indirect
 	github.com/streamingfast/derr v0.0.0-20230515163924-8570aaa43fe1 // indirect
-	github.com/streamingfast/dstore v0.1.1-0.20230126133209-44cda2076cfe // indirect
+	github.com/streamingfast/dstore v0.1.1-0.20230511202333-4f4ccf11a05f // indirect
 	github.com/streamingfast/opaque v0.0.0-20210811180740-0c01d37ea308 // indirect
 	github.com/stretchr/testify v1.8.1 // indirect
 	github.com/subosito/gotenv v1.4.2 // indirect
@@ -107,7 +108,3 @@ require (
 	google.golang.org/genproto v0.0.0-20230320184635-7606e756e683 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 )
-
-replace github.com/streamingfast/substreams-sink => /Users/maoueh/work/sf/substreams-sink
-
-replace github.com/streamingfast/dmetrics => /Users/maoueh/work/sf/dmetrics
