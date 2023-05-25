@@ -1,3 +1,5 @@
 .envrc
 state.yaml
 .idea
+/build
+/dist
