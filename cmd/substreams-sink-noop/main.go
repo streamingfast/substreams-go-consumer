@@ -47,6 +47,7 @@ func main() {
 
 			flags.BoolP("clean", "c", false, "Do not read existing state from cursor state file and start from scratch instead")
 			flags.DurationP("frequency", "f", frequencyDefault, "At which interval of time we should print statistics locally extracted from Prometheus")
+			flags.String("distinct-firehose-endpoint", "", "If not empty, will use this address for firehose request instead of using the same as substreams")
 			flags.String("state-store", "./state.yaml", "Output path where to store latest received cursor, if empty, cursor will not be persisted")
 			flags.String("api-listen-addr", ":8080", "Rest API to manage deployment")
 		}),
@@ -88,8 +89,14 @@ func run(cmd *cobra.Command, args []string) error {
 	stateStorePath := sflags.MustGetString(cmd, "state-store")
 	blockRange := sinker.BlockRange()
 
+	firehoseEndpoint := sflags.MustGetString(cmd, "distinct-firehose-endpoint")
+	if firehoseEndpoint == "" {
+		firehoseEndpoint = endpoint
+	}
+
 	zlog.Info("consuming substreams",
-		zap.String("endpoint", endpoint),
+		zap.String("substreams_endpoint", endpoint),
+		zap.String("firehose_endpoint", firehoseEndpoint),
 		zap.String("manifest_path", manifestPath),
 		zap.String("module_name", moduleName),
 		zap.Stringer("block_range", blockRange),
@@ -98,7 +105,8 @@ func run(cmd *cobra.Command, args []string) error {
 	)
 
 	firehoseConfig := &FirehoseClientConfig{JWT: sinker.ApiToken()}
-	firehoseConfig.Endpoint, firehoseConfig.PlainText, firehoseConfig.Insecure = sinker.EndpointConfig()
+	_, firehoseConfig.PlainText, firehoseConfig.Insecure = sinker.EndpointConfig()
+	firehoseConfig.Endpoint = firehoseEndpoint
 
 	firehoseClient, firehoseClose, err := NewFirehoseClient(firehoseConfig)
 	cli.NoError(err, "Unable to create firehose client")
