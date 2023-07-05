@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
+	"hash"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -50,6 +53,7 @@ func main() {
 			flags.String("distinct-firehose-endpoint", "", "If not empty, will use this address for firehose request instead of using the same as substreams")
 			flags.String("state-store", "./state.yaml", "Output path where to store latest received cursor, if empty, cursor will not be persisted")
 			flags.String("api-listen-addr", ":8080", "Rest API to manage deployment")
+			flags.Uint64("print-output-data-hash-interval", 0, "If non-zero, will hash the output for quickly comparing for differences")
 		}),
 		PersistentFlags(func(flags *pflag.FlagSet) {
 			flags.String("metrics-listen-addr", ":9102", "If non-empty, the process will listen on this address to server Prometheus metrics")
@@ -83,6 +87,10 @@ func run(cmd *cobra.Command, args []string) error {
 	cli.NoError(err, "Unable to create sinker")
 
 	sinker := &Sinker{Sinker: baseSinker}
+
+	if outputInterval := sflags.MustGetUint64(cmd, "print-output-data-hash-interval"); outputInterval != 0 {
+		sinker.outputDataHash = newDataHasher(outputInterval)
+	}
 
 	apiListenAddr := sflags.MustGetString(cmd, "api-listen-addr")
 	cleanState := sflags.MustGetBool(cmd, "clean")
@@ -202,6 +210,7 @@ type Sinker struct {
 
 	activeCursor            *sink.Cursor
 	headBlockReached        bool
+	outputDataHash          *dataHasher
 	backprocessingCompleted bool
 }
 
@@ -225,6 +234,10 @@ func (s *Sinker) HandleBlockScopedData(ctx context.Context, data *pbsubstreamsrp
 		HeadBlockReached.SetUint64(1)
 	}
 
+	if s.outputDataHash != nil {
+		s.outputDataHash.process(data)
+	}
+
 	return nil
 }
 
@@ -232,4 +245,30 @@ func (s *Sinker) HandleBlockUndoSignal(ctx context.Context, undoSignal *pbsubstr
 	s.activeCursor = cursor
 
 	return nil
+}
+
+func newDataHasher(size uint64) *dataHasher {
+	return &dataHasher{
+		size: size,
+	}
+}
+
+type dataHasher struct {
+	currentRange *bstream.Range
+	size         uint64
+	data         hash.Hash
+}
+
+func (h *dataHasher) process(d *pbsubstreamsrpc.BlockScopedData) {
+	if h.currentRange == nil {
+		h.currentRange, _ = bstream.NewRangeContaining(d.Clock.Number, h.size) // the only error case is if h.size is empty
+		h.data = sha256.New()
+	} else if !h.currentRange.Contains(d.Clock.Number) {
+		fmt.Println(h.currentRange, fmt.Sprintf("%x", h.data.Sum(nil)))
+		h.currentRange = h.currentRange.Next(h.size)
+		h.data = sha256.New()
+	}
+	h.data.Write([]byte(d.Output.Name + d.Output.MapOutput.TypeUrl))
+	h.data.Write(d.Output.MapOutput.Value)
+	return
 }
