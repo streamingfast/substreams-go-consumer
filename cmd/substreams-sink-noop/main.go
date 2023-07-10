@@ -17,6 +17,7 @@ import (
 	"github.com/streamingfast/logging"
 	"github.com/streamingfast/shutter"
 	sink "github.com/streamingfast/substreams-sink"
+	"github.com/streamingfast/substreams/client"
 	pbsubstreamsrpc "github.com/streamingfast/substreams/pb/sf/substreams/rpc/v2"
 	"go.uber.org/zap"
 )
@@ -50,7 +51,6 @@ func main() {
 
 			flags.BoolP("clean", "c", false, "Do not read existing state from cursor state file and start from scratch instead")
 			flags.DurationP("frequency", "f", frequencyDefault, "At which interval of time we should print statistics locally extracted from Prometheus")
-			flags.String("distinct-firehose-endpoint", "", "If not empty, will use this address for firehose request instead of using the same as substreams")
 			flags.String("state-store", "./state.yaml", "Output path where to store latest received cursor, if empty, cursor will not be persisted")
 			flags.String("api-listen-addr", ":8080", "Rest API to manage deployment")
 			flags.Uint64("print-output-data-hash-interval", 0, "If non-zero, will hash the output for quickly comparing for differences")
@@ -97,14 +97,8 @@ func run(cmd *cobra.Command, args []string) error {
 	stateStorePath := sflags.MustGetString(cmd, "state-store")
 	blockRange := sinker.BlockRange()
 
-	firehoseEndpoint := sflags.MustGetString(cmd, "distinct-firehose-endpoint")
-	if firehoseEndpoint == "" {
-		firehoseEndpoint = endpoint
-	}
-
 	zlog.Info("consuming substreams",
 		zap.String("substreams_endpoint", endpoint),
-		zap.String("firehose_endpoint", firehoseEndpoint),
 		zap.String("manifest_path", manifestPath),
 		zap.String("module_name", moduleName),
 		zap.Stringer("block_range", blockRange),
@@ -112,15 +106,11 @@ func run(cmd *cobra.Command, args []string) error {
 		zap.String("manage_listen_addr", apiListenAddr),
 	)
 
-	firehoseConfig := &FirehoseClientConfig{JWT: sinker.ApiToken()}
-	_, firehoseConfig.PlainText, firehoseConfig.Insecure = sinker.EndpointConfig()
-	firehoseConfig.Endpoint = firehoseEndpoint
+	headTrackerClient, headTrackerConnClose, headTrackerCallOpts, err := client.NewSubstreamsClient(sinker.ClientConfig())
+	cli.NoError(err, "Unable to create head tracker client")
+	defer headTrackerConnClose()
 
-	firehoseClient, firehoseClose, err := NewFirehoseClient(firehoseConfig)
-	cli.NoError(err, "Unable to create firehose client")
-	defer firehoseClose()
-
-	headFetcher := NewHeadFetcher(firehoseClient)
+	headFetcher := NewHeadTracker(headTrackerClient, headTrackerCallOpts)
 	app.OnTerminating(func(_ error) { headFetcher.Close() })
 	headFetcher.OnTerminated(func(err error) { app.Shutdown(err) })
 
@@ -166,7 +156,7 @@ func run(cmd *cobra.Command, args []string) error {
 	)
 
 	stats.Start(sflags.MustGetDuration(cmd, "frequency"))
-	headFetcher.Start(1 * time.Minute)
+	headFetcher.Start()
 	stateStore.Start(30 * time.Second)
 
 	app.OnTerminating(func(_ error) { sinker.Shutdown(nil) })
@@ -206,7 +196,7 @@ func run(cmd *cobra.Command, args []string) error {
 type Sinker struct {
 	*sink.Sinker
 
-	headFetcher *HeadFetcher
+	headFetcher *HeadTracker
 
 	activeCursor            *sink.Cursor
 	headBlockReached        bool
@@ -270,5 +260,5 @@ func (h *dataHasher) process(d *pbsubstreamsrpc.BlockScopedData) {
 	}
 	h.data.Write([]byte(d.Output.Name + d.Output.MapOutput.TypeUrl))
 	h.data.Write(d.Output.MapOutput.Value)
-	return
+
 }

@@ -1,51 +1,44 @@
 package main
 
 import (
+	_ "embed"
+
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/streamingfast/bstream"
+	"github.com/streamingfast/derr"
 	"github.com/streamingfast/dgrpc"
-	pbtransform "github.com/streamingfast/firehose-ethereum/types/pb/sf/ethereum/transform/v1"
-	pbfirehose "github.com/streamingfast/pbgo/sf/firehose/v2"
 	"github.com/streamingfast/shutter"
+	sinknoop "github.com/streamingfast/substreams-sink-noop"
+	pbsubstreamsrpc "github.com/streamingfast/substreams/pb/sf/substreams/rpc/v2"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/protobuf/types/known/anypb"
 )
 
-type HeadFetcher struct {
+type HeadTracker struct {
 	*shutter.Shutter
-	client pbfirehose.StreamClient
-	value  AtomicValue[bstream.BlockRef]
+	client   pbsubstreamsrpc.StreamClient
+	callOpts []grpc.CallOption
+	value    AtomicValue[bstream.BlockRef]
 }
 
-func NewHeadFetcher(client pbfirehose.StreamClient) *HeadFetcher {
-	return &HeadFetcher{
-		Shutter: shutter.New(),
-		client:  client,
+func NewHeadTracker(client pbsubstreamsrpc.StreamClient, callOpts []grpc.CallOption) *HeadTracker {
+	return &HeadTracker{
+		Shutter:  shutter.New(),
+		client:   client,
+		callOpts: callOpts,
 	}
 }
 
-func (s *HeadFetcher) Init(ctx context.Context) error {
-	headBlock, err := s.FetchHeadBlock(ctx)
-	if err != nil {
-		return err
-	}
-
-	if headBlock != nil {
-		s.value.Store(headBlock)
-	}
-
-	return nil
-}
-
-func (s *HeadFetcher) Start(refreshEach time.Duration) {
-	zlog.Info("starting head fetcher service", zap.Duration("refreshes_each", refreshEach))
+func (s *HeadTracker) Start() {
+	zlog.Info("starting head tracker service")
 
 	if s.IsTerminating() || s.IsTerminated() {
 		panic("already shutdown, refusing to start again")
@@ -55,105 +48,105 @@ func (s *HeadFetcher) Start(refreshEach time.Duration) {
 	s.OnTerminating(func(error) { cancel() })
 
 	go func() {
-		if s.value.Load() == nil {
-			if err := s.Init(ctx); err != nil && !isCanceledError(err) {
-				zlog.Error("unable to fetch head block with retries, head block will be nil until then")
-			}
-		}
-
-		ticker := time.NewTicker(refreshEach)
-		defer ticker.Stop()
+		activeCursor := ""
+		backOff := backoff.WithContext(backoff.NewExponentialBackOff(), ctx)
+		receivedMessage := false
 
 		for {
-			select {
-			case <-ticker.C:
-				headBlock, err := s.FetchHeadBlock(ctx)
-				if err != nil && !isCanceledError(err) {
-					zlog.Error("unable to fetch head block with retries, head block will be nil until then")
-					continue
+			var err error
+			activeCursor, receivedMessage, err = s.streamHead(ctx, activeCursor)
+			if ctx.Err() != nil {
+				// Nothing to do, context canceled or timeout
+				return
+			}
+
+			// If we received at least one message, we must reset the backoff
+			if receivedMessage {
+				backOff.Reset()
+			}
+
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					panic(fmt.Errorf("substreams head tracker should never end"))
 				}
 
-				// Could be a canceled error, in which case we must not store the headBlock since it's nil
-				if err == nil {
-					s.value.Store(headBlock)
+				var retryableError *derr.RetryableError
+				if errors.As(err, &retryableError) {
+					sleepFor := backOff.NextBackOff()
+					if sleepFor == backoff.Stop {
+						panic(fmt.Errorf("substreams head tracker backOff should never stop"))
+					}
+
+					time.Sleep(sleepFor)
+				} else {
+					zlog.Error("substreams head tracker failed", zap.Error(err))
+					return
 				}
-			case <-s.Terminating():
-				return
 			}
 		}
 	}()
 }
 
-// FetchHeadBlock retrieves the head block from a Firehose endpoint and handles retry using an exponential backoff
-// algorithm that is going to stop when current retry delay >60s which takes around 120s.
-func (s *HeadFetcher) FetchHeadBlock(ctx context.Context) (ref bstream.BlockRef, err error) {
-	operation := func() (opErr error) {
-		ref, opErr = s.fetchHeadBlock(ctx)
-		return opErr
-	}
-
-	err = backoff.RetryNotify(
-		operation,
-		backoff.WithContext(backoff.WithMaxRetries(backoff.NewExponentialBackOff(), 12), ctx),
-		func(err error, delay time.Duration) {
-			zlog.Error("retrying after error with delay before retry", zap.Duration("delay", delay), zap.Error(err))
-		},
-	)
-
-	// Only when non-0 we assume the chain block head is right (some chain could have a valid block at 0, but
-	// it's not super important for us).
-	if err == nil && ref.Num() != 0 {
-		ChainHeadBlockNumber.SetUint64(ref.Num())
-	}
-
-	return ref, err
-}
-
-func (s *HeadFetcher) fetchHeadBlock(ctx context.Context) (ref bstream.BlockRef, err error) {
-	// FIXME: Transform per network would be required
-	transform, err := anypb.New(&pbtransform.HeaderOnly{})
-	if err != nil {
-		return ref, fmt.Errorf("header only transform to any: should never happen, message used here is always transformable to *anypb.Any")
-	}
-
-	fetchCtx, cancelFetch := context.WithCancel(ctx)
-	defer cancelFetch()
-
-	stream, err := s.client.Blocks(fetchCtx, &pbfirehose.Request{
-		StartBlockNum:   -1,
-		FinalBlocksOnly: false,
-		Cursor:          "",
-		Transforms:      []*anypb.Any{transform},
-	})
-	if err != nil {
-		return ref, fmt.Errorf("firehose stream blocks: %w", err)
-	}
-
-	for {
-		response, err := stream.Recv()
-		if err != nil {
-			return ref, fmt.Errorf("firehose receive block: %w", err)
-		}
-
-		if response.Step == pbfirehose.ForkStep_STEP_NEW {
-			cursor, err := bstream.CursorFromOpaque(response.Cursor)
-			if err != nil {
-				return ref, fmt.Errorf("invalid received cursor (maybe you have an outdated 'github.com/streamingfast/bstream' dependency?): %w", err)
-			}
-
-			return bstream.NewBlockRef(cursor.Block.ID(), cursor.Block.Num()), nil
-		}
-	}
-}
-
-func (s *HeadFetcher) Current() (ref bstream.BlockRef, found bool) {
+func (s *HeadTracker) Current() (ref bstream.BlockRef, found bool) {
 	ref = s.value.Load()
 	found = ref != nil && !bstream.EqualsBlockRefs(ref, bstream.BlockRefEmpty)
 	return
 }
 
-func (s *HeadFetcher) Close() {
+func (s *HeadTracker) Close() {
 	s.Shutdown(nil)
+}
+
+func (s *HeadTracker) streamHead(ctx context.Context, activeCursor string) (string, bool, error) {
+	receivedMessage := false
+
+	req, err := sinknoop.AddHeadTrackerManifestToSubstreamsRequest(&pbsubstreamsrpc.Request{
+		StartBlockNum:  -1,
+		StopBlockNum:   0,
+		StartCursor:    activeCursor,
+		ProductionMode: true,
+	})
+	if err != nil {
+		return activeCursor, receivedMessage, fmt.Errorf("add head tracker manifest to substreams request: %w", err)
+	}
+
+	stream, err := s.client.Blocks(ctx, req, s.callOpts...)
+	if err != nil {
+		return activeCursor, receivedMessage, retryable(fmt.Errorf("call sf.substreams.rpc.v2.Stream/Blocks: %w", err))
+	}
+
+	for {
+		resp, err := stream.Recv()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return activeCursor, receivedMessage, err
+			}
+
+			// Unauthanticated and canceled are not retryable
+			if dgrpcError := dgrpc.AsGRPCError(err); dgrpcError != nil {
+				switch dgrpcError.Code() {
+				case codes.Unauthenticated, codes.Canceled:
+					return activeCursor, receivedMessage, fmt.Errorf("stream failure: %w", err)
+				}
+			}
+
+			return activeCursor, receivedMessage, retryable(err)
+		}
+
+		receivedMessage = true
+
+		switch r := resp.Message.(type) {
+		case *pbsubstreamsrpc.Response_BlockScopedData:
+			s.value.Store(bstream.NewBlockRef(r.BlockScopedData.Clock.Id, r.BlockScopedData.Clock.Number))
+			activeCursor = r.BlockScopedData.Cursor
+
+		case *pbsubstreamsrpc.Response_BlockUndoSignal:
+			undoSignal := r.BlockUndoSignal
+
+			s.value.Store(bstream.NewBlockRef(undoSignal.LastValidBlock.Id, undoSignal.LastValidBlock.Number))
+			activeCursor = undoSignal.LastValidCursor
+		}
+	}
 }
 
 type AtomicValue[T any] struct {
@@ -184,4 +177,8 @@ func (v *AtomicValue[T]) Swap(new T) (old T) {
 
 func isCanceledError(err error) bool {
 	return errors.Is(err, context.Canceled) || dgrpc.IsGRPCErrorCode(err, codes.Canceled)
+}
+
+func retryable(err error) error {
+	return derr.NewRetryableError(err)
 }

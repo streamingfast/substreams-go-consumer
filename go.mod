@@ -10,9 +10,9 @@ require (
 	github.com/spf13/viper v1.15.0
 	github.com/streamingfast/bstream v0.0.2-0.20230510131449-6b591d74130d
 	github.com/streamingfast/cli v0.0.4-0.20230508203625-ecd532feb120
+	github.com/streamingfast/derr v0.0.0-20230515163924-8570aaa43fe1
 	github.com/streamingfast/dgrpc v0.0.0-20230621153617-bc715cdb9fd1
 	github.com/streamingfast/dmetrics v0.0.0-20230516031116-28fcfeb4b9ed
-	github.com/streamingfast/firehose-ethereum/types v0.0.0-20230509180106-368e4933d2b7
 	github.com/streamingfast/logging v0.0.0-20221209193439-bff11742bf4c
 	github.com/streamingfast/pbgo v0.0.6-0.20220630154121-2e8bba36234e
 	github.com/streamingfast/shutter v1.5.0
@@ -105,7 +105,6 @@ require (
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/streamingfast/atm v0.0.0-20220131151839-18c87005e680 // indirect
 	github.com/streamingfast/dbin v0.0.0-20210809205249-73d5eca35dc5 // indirect
-	github.com/streamingfast/derr v0.0.0-20230515163924-8570aaa43fe1 // indirect
 	github.com/streamingfast/dstore v0.1.1-0.20230620124109-3924b3b36c77 // indirect
 	github.com/streamingfast/opaque v0.0.0-20210811180740-0c01d37ea308 // indirect
 	github.com/stretchr/testify v1.8.3 // indirect
@@ -134,3 +133,5 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	lukechampine.com/blake3 v1.1.7 // indirect
 )
+
+replace github.com/streamingfast/substreams-sink => /Users/maoueh/work/sf/substreams-sink

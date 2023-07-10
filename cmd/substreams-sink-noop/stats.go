@@ -13,7 +13,7 @@ import (
 type Stats struct {
 	*shutter.Shutter
 
-	headFetcher *HeadFetcher
+	headFetcher *HeadTracker
 	lastBlock   bstream.BlockRef
 	stopBlock   uint64
 
@@ -21,7 +21,7 @@ type Stats struct {
 	headBlockReached         *dmetrics.ValueFromMetric
 }
 
-func NewStats(stopBlock uint64, headFetcher *HeadFetcher) *Stats {
+func NewStats(stopBlock uint64, headFetcher *HeadTracker) *Stats {
 	return &Stats{
 		Shutter:   shutter.New(),
 		stopBlock: stopBlock,
