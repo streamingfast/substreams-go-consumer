@@ -8,16 +8,16 @@ require (
 	github.com/spf13/cobra v1.6.1
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.15.0
-	github.com/streamingfast/bstream v0.0.2-0.20230510131449-6b591d74130d
+	github.com/streamingfast/bstream v0.0.2-0.20230731165201-639b4f347707
 	github.com/streamingfast/cli v0.0.4-0.20230508203625-ecd532feb120
 	github.com/streamingfast/derr v0.0.0-20230515163924-8570aaa43fe1
 	github.com/streamingfast/dgrpc v0.0.0-20230621153617-bc715cdb9fd1
-	github.com/streamingfast/dmetrics v0.0.0-20230516031116-28fcfeb4b9ed
+	github.com/streamingfast/dmetrics v0.0.0-20230830150831-a7c98f755707
 	github.com/streamingfast/logging v0.0.0-20221209193439-bff11742bf4c
-	github.com/streamingfast/pbgo v0.0.6-0.20220630154121-2e8bba36234e
+	github.com/streamingfast/pbgo v0.0.6-0.20221020131607-255008258d28
 	github.com/streamingfast/shutter v1.5.0
-	github.com/streamingfast/substreams v1.1.8-0.20230705171054-90758978ac9c
-	github.com/streamingfast/substreams-sink v0.2.7-0.20230719224247-2fcecf1940b4
+	github.com/streamingfast/substreams v1.1.12-0.20230829174456-08bca20358c7
+	github.com/streamingfast/substreams-sink v0.3.1
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.36.4
 	go.uber.org/zap v1.24.0
 	golang.org/x/oauth2 v0.8.0
@@ -41,7 +41,7 @@ require (
 	github.com/bobg/go-generics/v2 v2.1.1 // indirect
 	github.com/census-instrumentation/opencensus-proto v0.4.1 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
-	github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e // indirect
+	github.com/chzyer/readline v1.5.0 // indirect
 	github.com/cncf/udpa/go v0.0.0-20220112060539-c52dc94e7fbe // indirect
 	github.com/cncf/xds/go v0.0.0-20230105202645-06c439db220b // indirect
 	github.com/crackcomm/go-gitignore v0.0.0-20170627025303-887ab5e44cc3 // indirect
@@ -119,8 +119,8 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
 	golang.org/x/crypto v0.6.0 // indirect
-	golang.org/x/exp v0.0.0-20230213192124-5e25df0256eb // indirect
-	golang.org/x/mod v0.8.0 // indirect
+	golang.org/x/exp v0.0.0-20230711153332-06a737ee72cb // indirect
+	golang.org/x/mod v0.11.0 // indirect
 	golang.org/x/net v0.10.0 // indirect
 	golang.org/x/sys v0.9.0 // indirect
 	golang.org/x/term v0.8.0 // indirect
