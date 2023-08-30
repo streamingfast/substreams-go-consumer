@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Substreams Progress Messages
 
-> [!IMPORTANT]  This client only support progress messages send from a to a server with substreams version >=v1.1.12
+> [!IMPORTANT]
+> This client only support progress messages sent from a to a server with substreams version >=v1.1.12
 
 * Bumped substreams-sink to `v0.3.1` and substreams to `v1.1.12` to support the new progress message format. Progression now relates to **stages** instead of modules. You can get stage information using the `substreams info` command starting at version `v1.1.12`.
 
