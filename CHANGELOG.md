@@ -5,11 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v1.1.2
 
-* Added '--network' flag and handling
+* Improved `substreams stream stats` log line but now using `substreams_sink_progress_message_total_processed_blocks` for `progress_block_rate` replacing the `progress_msg_rate` which wasn't meaningful anymore (and broken because the metric was never updated).
 
-* It's now possible to define on your handler the method `HandleBlockRangeCompletion(ctx context.Context, cursor *sink.Cursor) error` which will be called back when the `sink.Sinker` instance fully completed the request block range (infinite streaming or terminate because of an error does not trigger it).
+* Fixed a crash when providing a single block argument for block range if it's the same as the Substreams' start block.
+
+* Added `--network` flag and handling proper handling.
 
 ## v1.1.1
 
