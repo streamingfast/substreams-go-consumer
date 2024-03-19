@@ -16,24 +16,28 @@ import (
 	"github.com/streamingfast/dgrpc"
 	"github.com/streamingfast/shutter"
 	sinknoop "github.com/streamingfast/substreams-sink-noop"
+	"github.com/streamingfast/substreams/client"
 	pbsubstreamsrpc "github.com/streamingfast/substreams/pb/sf/substreams/rpc/v2"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 )
 
 type HeadTracker struct {
 	*shutter.Shutter
 	client   pbsubstreamsrpc.StreamClient
 	callOpts []grpc.CallOption
+	headers  client.Headers
 	value    AtomicValue[bstream.BlockRef]
 }
 
-func NewHeadTracker(client pbsubstreamsrpc.StreamClient, callOpts []grpc.CallOption) *HeadTracker {
+func NewHeadTracker(client pbsubstreamsrpc.StreamClient, callOpts []grpc.CallOption, headers client.Headers) *HeadTracker {
 	return &HeadTracker{
 		Shutter:  shutter.New(),
 		client:   client,
 		callOpts: callOpts,
+		headers:  headers,
 	}
 }
 
@@ -108,6 +112,10 @@ func (s *HeadTracker) streamHead(ctx context.Context, activeCursor string) (stri
 	})
 	if err != nil {
 		return activeCursor, receivedMessage, fmt.Errorf("add head tracker manifest to substreams request: %w", err)
+	}
+
+	if s.headers.IsSet() {
+		ctx = metadata.AppendToOutgoingContext(ctx, s.headers.ToArray()...)
 	}
 
 	stream, err := s.client.Blocks(ctx, req, s.callOpts...)
