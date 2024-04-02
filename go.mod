@@ -1,13 +1,17 @@
 module github.com/streamingfast/substreams-sink-noop
 
-go 1.21
+go 1.22
+
+toolchain go1.22.0
 
 require (
+	connectrpc.com/connect v1.15.0
 	github.com/cenkalti/backoff/v4 v4.2.1
 	github.com/gorilla/mux v1.8.0
 	github.com/spf13/cobra v1.7.0
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.15.0
+	github.com/streamingfast/blockmeta-service/server v0.0.0-20240305210209-2f971e09cdef
 	github.com/streamingfast/bstream v0.0.2-0.20231121211820-e45c1b42f472
 	github.com/streamingfast/cli v0.0.4-0.20230825151644-8cc84512cd80
 	github.com/streamingfast/derr v0.0.0-20230515163924-8570aaa43fe1

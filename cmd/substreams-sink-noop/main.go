@@ -1,10 +1,16 @@
 package main
 
 import (
+	"connectrpc.com/connect"
 	"context"
 	"crypto/sha256"
 	"fmt"
+	pbbmsrv "github.com/streamingfast/blockmeta-service/server/pb/sf/blockmeta/v2"
+	"github.com/streamingfast/blockmeta-service/server/pb/sf/blockmeta/v2/pbbmsrvconnect"
 	"hash"
+	"net/http"
+	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -54,6 +60,7 @@ func main() {
 			flags.String("state-store", "./state.yaml", "Output path where to store latest received cursor, if empty, cursor will not be persisted")
 			flags.String("api-listen-addr", ":8080", "Rest API to manage deployment")
 			flags.Uint64("print-output-data-hash-interval", 0, "If non-zero, will hash the output for quickly comparing for differences")
+			flags.String("blockmeta-api-key", "...", "Blockmeta service api key")
 		}),
 		PersistentFlags(func(flags *pflag.FlagSet) {
 			flags.String("metrics-listen-addr", ":9102", "If non-empty, the process will listen on this address to server Prometheus metrics")
@@ -64,6 +71,8 @@ func main() {
 		}),
 	)
 }
+
+const ApiKeyHeader = "x-api-key"
 
 func run(cmd *cobra.Command, args []string) error {
 	app := shutter.New()
@@ -81,6 +90,27 @@ func run(cmd *cobra.Command, args []string) error {
 		blockRangeArg = args[3]
 	}
 
+	blockmetaApiKey := sflags.MustGetString(cmd, "blockmeta-api-key")
+	if blockRangeArg == "" && blockmetaApiKey != "" {
+		blockmetaUrl := &url.URL{
+			Scheme: "https",
+			Host:   endpoint,
+		}
+
+		blockmetaClient := pbbmsrvconnect.NewBlockClient(http.DefaultClient, blockmetaUrl.String())
+		fmt.Println(blockmetaUrl.String())
+		request := connect.NewRequest(&pbbmsrv.Empty{})
+		request.Header().Set(ApiKeyHeader, blockmetaApiKey)
+
+		headBlock, err := blockmetaClient.Head(ctx, request)
+		if err != nil {
+			return fmt.Errorf("requesting head block to blockmeta service: %w", err)
+		}
+
+		blockRangeArg = ":" + strconv.FormatUint(headBlock.Msg.Num, 10)
+	}
+
+	//TODO: IF BLOCKMETA ADDRESS IS MENTIONED, GET THE HEAD BLOCK FROM BLOCK META...
 	baseSinker, err := sink.NewFromViper(cmd, sink.IgnoreOutputModuleType, endpoint, manifestPath, moduleName, blockRangeArg, zlog, tracer,
 		sink.WithBlockDataBuffer(0),
 	)
