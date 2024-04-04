@@ -7,10 +7,12 @@ import (
 	"fmt"
 	pbbmsrv "github.com/streamingfast/blockmeta-service/server/pb/sf/blockmeta/v2"
 	"github.com/streamingfast/blockmeta-service/server/pb/sf/blockmeta/v2/pbbmsrvconnect"
+	"gopkg.in/yaml.v3"
 	"hash"
 	"net/http"
-	"net/url"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -60,7 +62,9 @@ func main() {
 			flags.String("state-store", "./state.yaml", "Output path where to store latest received cursor, if empty, cursor will not be persisted")
 			flags.String("api-listen-addr", ":8080", "Rest API to manage deployment")
 			flags.Uint64("print-output-data-hash-interval", 0, "If non-zero, will hash the output for quickly comparing for differences")
-			flags.String("blockmeta-api-key", "...", "Blockmeta service api key")
+			flags.Uint64("follow-head-substreams-segment", 1000, "")
+			flags.String("follow-head-blockmeta-url", "", "Block meta URL to follow head block, when provided, the sink enable the follow head mode (if block range not provided)")
+			flags.Uint64("follow-head-reversible-segment", 100, "Segment size for reversible block")
 		}),
 		PersistentFlags(func(flags *pflag.FlagSet) {
 			flags.String("metrics-listen-addr", ":9102", "If non-empty, the process will listen on this address to server Prometheus metrics")
@@ -75,12 +79,7 @@ func main() {
 const ApiKeyHeader = "x-api-key"
 
 func run(cmd *cobra.Command, args []string) error {
-	app := shutter.New()
-
-	ctx, cancelApp := context.WithCancel(cmd.Context())
-	app.OnTerminating(func(_ error) {
-		cancelApp()
-	})
+	ctx := cmd.Context()
 
 	endpoint := args[0]
 	manifestPath := args[1]
@@ -90,27 +89,108 @@ func run(cmd *cobra.Command, args []string) error {
 		blockRangeArg = args[3]
 	}
 
-	blockmetaApiKey := sflags.MustGetString(cmd, "blockmeta-api-key")
-	if blockRangeArg == "" && blockmetaApiKey != "" {
-		blockmetaUrl := &url.URL{
-			Scheme: "https",
-			Host:   endpoint,
-		}
-
-		blockmetaClient := pbbmsrvconnect.NewBlockClient(http.DefaultClient, blockmetaUrl.String())
-		fmt.Println(blockmetaUrl.String())
-		request := connect.NewRequest(&pbbmsrv.Empty{})
-		request.Header().Set(ApiKeyHeader, blockmetaApiKey)
-
-		headBlock, err := blockmetaClient.Head(ctx, request)
-		if err != nil {
-			return fmt.Errorf("requesting head block to blockmeta service: %w", err)
-		}
-
-		blockRangeArg = ":" + strconv.FormatUint(headBlock.Msg.Num, 10)
+	var err error
+	blockmetaUrl := sflags.MustGetString(cmd, "follow-head-blockmeta-url")
+	substreamsSegmentSize := sflags.MustGetUint64(cmd, "follow-head-substreams-segment")
+	reversibleSegmentSize := sflags.MustGetUint64(cmd, "follow-head-reversible-segment")
+	var blockmetaClient pbbmsrvconnect.BlockClient
+	if blockmetaUrl != "" {
+		blockmetaClient = pbbmsrvconnect.NewBlockClient(http.DefaultClient, blockmetaUrl)
 	}
 
-	//TODO: IF BLOCKMETA ADDRESS IS MENTIONED, GET THE HEAD BLOCK FROM BLOCK META...
+	signalHandler, isSignaled, _ := cli.SetupSignalHandler(0*time.Second, zlog)
+	sessionCounter := uint64(0)
+	stateStorePath := sflags.MustGetString(cmd, "state-store")
+	var sleepingDuration time.Duration
+	for {
+		if blockmetaClient != nil {
+			for {
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-signalHandler:
+					return nil
+				case <-time.After(sleepingDuration):
+					// continue
+				}
+				sleepingDuration = 5 * time.Second
+
+				blockRangeArg, err = computeBlockRangeFromHead(ctx, blockmetaClient, reversibleSegmentSize, substreamsSegmentSize, blockRangeArg)
+				if err != nil {
+					return fmt.Errorf("computing block range from head: %w", err)
+				}
+
+				startBlockString := strings.Split(blockRangeArg, ":")[0]
+				startBlock, err := strconv.Atoi(startBlockString)
+				if err != nil {
+					return fmt.Errorf("converting start block to integer: %w", err)
+				}
+
+				computedEndBlock := strings.Split(blockRangeArg, ":")[1]
+				endBlock, err := strconv.Atoi(computedEndBlock)
+				if err != nil {
+					return fmt.Errorf("converting start block to integer: %w", err)
+				}
+
+				cursorExisting, extractedBlockNumber, err := readBlockNumFromCursor(stateStorePath)
+				if err != nil {
+					return fmt.Errorf("reading start block from state path: %w", err)
+				}
+
+				if cursorExisting {
+					startBlock = int(extractedBlockNumber)
+				}
+
+				if startBlock < endBlock-1 {
+					break
+				}
+
+				zlog.Info("retrying block range computation", zap.Uint64("session_counter", sessionCounter), zap.Int("start_block_computed", startBlock), zap.Int("end_block_computed", endBlock))
+			}
+		}
+
+		zlog.Info("starting sink session", zap.Uint64("session_counter", sessionCounter))
+		err = runSink(cmd, blockRangeArg, endpoint, manifestPath, moduleName, zlog, tracer, signalHandler, stateStorePath)
+		if err != nil {
+			return err
+		}
+
+		if blockmetaClient == nil {
+			return nil
+		}
+
+		if isSignaled.Load() {
+			return nil
+		}
+
+		sessionCounter += 1
+		zlog.Info("sleeping until next session", zap.Uint64("session_counter", sessionCounter))
+	}
+}
+
+func readBlockNumFromCursor(stateStorePath string) (cursorExisting bool, startBlock uint64, err error) {
+	content, err := os.ReadFile(stateStorePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, 0, nil
+		}
+		return false, 0, fmt.Errorf("reading cursor state file: %w", err)
+	}
+
+	state := syncState{}
+	if err = yaml.Unmarshal(content, &state); err != nil {
+		return false, 0, fmt.Errorf("unmarshal state file %q: %w", stateStorePath, err)
+	}
+
+	return true, state.Block.Number, nil
+}
+func runSink(cmd *cobra.Command, blockRangeArg string, endpoint string, manifestPath string, moduleName string, zlog *zap.Logger, tracer logging.Tracer, signalHandler <-chan os.Signal, stateStorePath string) error {
+	app := shutter.New()
+	ctx, cancelApp := context.WithCancel(cmd.Context())
+	app.OnTerminating(func(_ error) {
+		cancelApp()
+	})
+
 	baseSinker, err := sink.NewFromViper(cmd, sink.IgnoreOutputModuleType, endpoint, manifestPath, moduleName, blockRangeArg, zlog, tracer,
 		sink.WithBlockDataBuffer(0),
 	)
@@ -124,10 +204,11 @@ func run(cmd *cobra.Command, args []string) error {
 
 	apiListenAddr := sflags.MustGetString(cmd, "api-listen-addr")
 	cleanState := sflags.MustGetBool(cmd, "clean")
-	stateStorePath := sflags.MustGetString(cmd, "state-store")
 	blockRange := sinker.BlockRange()
 
-	zlog.Info("consuming substreams",
+	managementApi := NewManager(apiListenAddr)
+
+	zlog.Info("start new substreams consumption session",
 		zap.String("substreams_endpoint", endpoint),
 		zap.String("manifest_path", manifestPath),
 		zap.String("module_name", moduleName),
@@ -142,7 +223,9 @@ func run(cmd *cobra.Command, args []string) error {
 
 	headFetcher := NewHeadTracker(headTrackerClient, headTrackerCallOpts, headTrackerHeaders)
 	app.OnTerminating(func(_ error) { headFetcher.Close() })
-	headFetcher.OnTerminated(func(err error) { app.Shutdown(err) })
+	headFetcher.OnTerminated(func(err error) {
+		app.Shutdown(err)
+	})
 
 	sinker.headFetcher = headFetcher
 
@@ -153,16 +236,21 @@ func run(cmd *cobra.Command, args []string) error {
 
 	stats := NewStats(stopBlock, headFetcher)
 	app.OnTerminating(func(_ error) { stats.Close() })
-	stats.OnTerminated(func(err error) { app.Shutdown(err) })
+	stats.OnTerminated(func(err error) {
+		app.Shutdown(err)
+	})
 
 	stateStore := NewStateStore(stateStorePath, func() (*sink.Cursor, bool, bool) {
-		return sinker.activeCursor, sinker.backprocessingCompleted, sinker.headBlockReached
+		return sinker.activeCursor, sinker.backprocessingCompleted, sinker.headBlockReachedMetric
 	})
 	app.OnTerminating(func(_ error) { stateStore.Close() })
-	stateStore.OnTerminated(func(err error) { app.Shutdown(err) })
+	stateStore.OnTerminated(func(err error) {
+		app.Shutdown(err)
+	})
 
-	managementApi := NewManager(apiListenAddr)
-	managementApi.OnTerminated(func(err error) { app.Shutdown(err) })
+	managementApi.OnTerminated(func(err error) {
+		app.Shutdown(err)
+	})
 	app.OnTerminating(func(_ error) {
 		if managementApi.shouldResetState {
 			if err := stateStore.Delete(); err != nil {
@@ -175,7 +263,6 @@ func run(cmd *cobra.Command, args []string) error {
 	if !cleanState {
 		cursor, _, err := stateStore.Read()
 		cli.NoError(err, "Unable to read state store")
-
 		sinker.activeCursor = sink.MustNewCursor(cursor)
 	}
 
@@ -196,31 +283,45 @@ func run(cmd *cobra.Command, args []string) error {
 
 	go sinker.Run(ctx)
 
-	zlog.Info("ready, waiting for signal to quit")
-
-	signalHandler, isSignaled, _ := cli.SetupSignalHandler(0*time.Second, zlog)
 	select {
 	case <-signalHandler:
 		go app.Shutdown(nil)
-		break
 	case <-app.Terminating():
-		zlog.Info("run terminating", zap.Bool("from_signal", isSignaled.Load()), zap.Bool("with_error", app.Err() != nil))
-		break
+		zlog.Info("run terminating", zap.Bool("with_error", app.Err() != nil))
 	}
 
 	zlog.Info("waiting for run termination")
 	select {
 	case <-app.Terminated():
+		return app.Err()
 	case <-time.After(30 * time.Second):
 		zlog.Warn("application did not terminate within 30s")
+		return app.Err()
+	}
+}
+
+func computeBlockRangeFromHead(ctx context.Context, blockmetaClient pbbmsrvconnect.BlockClient, reversibleSegmentSize uint64, substreamsSegmentSize uint64, blockRangeArg string) (string, error) {
+	request := connect.NewRequest(&pbbmsrv.Empty{})
+
+	apiKey := os.Getenv("SUBSTREAMS_API_KEY")
+	if apiKey == "" {
+		return "", fmt.Errorf("missing SUBSTREAMS_API_KEY environment variable")
+	}
+	request.Header().Set(ApiKeyHeader, apiKey)
+
+	headBlock, err := blockmetaClient.Head(ctx, request)
+	if err != nil {
+		return "", fmt.Errorf("requesting head block to blockmeta service: %w", err)
 	}
 
-	if err := app.Err(); err != nil {
-		return err
+	computedEndBlock := ((headBlock.Msg.Num - reversibleSegmentSize) / substreamsSegmentSize) * substreamsSegmentSize
+	blockRangeArray := strings.Split(blockRangeArg, ":")
+	if len(blockRangeArray) != 2 {
+		return "", fmt.Errorf("invalid block range format")
 	}
 
-	zlog.Info("run terminated gracefully")
-	return nil
+	//The computed block range replace the end block by a computed one
+	return (blockRangeArray[0] + ":" + strconv.FormatUint(computedEndBlock, 10)), nil
 }
 
 type Sinker struct {
@@ -229,7 +330,7 @@ type Sinker struct {
 	headFetcher *HeadTracker
 
 	activeCursor            *sink.Cursor
-	headBlockReached        bool
+	headBlockReachedMetric  bool
 	outputDataHash          *dataHasher
 	backprocessingCompleted bool
 }
@@ -250,7 +351,7 @@ func (s *Sinker) HandleBlockScopedData(ctx context.Context, data *pbsubstreamsrp
 
 	chainHeadBlock, found := s.headFetcher.Current()
 	if found && block.Num() >= chainHeadBlock.Num() {
-		s.headBlockReached = true
+		s.headBlockReachedMetric = true
 		HeadBlockReached.SetUint64(1)
 	}
 
