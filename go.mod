@@ -21,7 +21,7 @@ require (
 	github.com/streamingfast/pbgo v0.0.6-0.20231120172814-537d034aad5e
 	github.com/streamingfast/shutter v1.5.0
 	github.com/streamingfast/substreams v1.3.7
-	github.com/streamingfast/substreams-sink v0.3.4
+	github.com/streamingfast/substreams-sink v0.3.5
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.47.0
 	go.uber.org/zap v1.26.0
 	golang.org/x/oauth2 v0.16.0
