@@ -53,7 +53,9 @@ func (s *HeadTracker) Start() {
 
 	go func() {
 		activeCursor := ""
-		backOff := backoff.WithContext(backoff.NewExponentialBackOff(), ctx)
+		bo := backoff.NewExponentialBackOff()
+		bo.MaxElapsedTime = 0
+		backOff := backoff.WithContext(bo, ctx)
 		receivedMessage := false
 
 		for {
