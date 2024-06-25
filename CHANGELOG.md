@@ -5,10 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v1.1.6
-
-* Add `--follow-head-insecure` flag to allow insecure ssl connection to a block-meta service
-
 ## v1.1.5
 
 * Add a `follow-head` mode. It enables the sink noop to follow the chain's head when a block-meta url is provided (The block-meta is used to fetch the head block info).

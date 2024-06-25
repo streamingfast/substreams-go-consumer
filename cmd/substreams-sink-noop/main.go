@@ -1,21 +1,19 @@
 package main
 
 import (
+	"connectrpc.com/connect"
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"fmt"
+	pbbmsrv "github.com/streamingfast/blockmeta-service/server/pb/sf/blockmeta/v2"
+	"github.com/streamingfast/blockmeta-service/server/pb/sf/blockmeta/v2/pbbmsrvconnect"
+	"gopkg.in/yaml.v3"
 	"hash"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
-
-	"connectrpc.com/connect"
-	pbbmsrv "github.com/streamingfast/blockmeta-service/server/pb/sf/blockmeta/v2"
-	"github.com/streamingfast/blockmeta-service/server/pb/sf/blockmeta/v2/pbbmsrvconnect"
-	"gopkg.in/yaml.v3"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -66,7 +64,6 @@ func main() {
 			flags.Uint64("print-output-data-hash-interval", 0, "If non-zero, will hash the output for quickly comparing for differences")
 			flags.Uint64("follow-head-substreams-segment", 1000, "")
 			flags.String("follow-head-blockmeta-url", "", "Block meta URL to follow head block, when provided, the sink enable the follow head mode (if block range not provided)")
-			flags.Bool("follow-head-insecure", false, "Skip tls verification when connecting to blockmeta service")
 			flags.Uint64("follow-head-reversible-segment", 100, "Segment size for reversible block")
 		}),
 		PersistentFlags(func(flags *pflag.FlagSet) {
@@ -98,13 +95,8 @@ func run(cmd *cobra.Command, args []string) error {
 	reversibleSegmentSize := sflags.MustGetUint64(cmd, "follow-head-reversible-segment")
 	var blockmetaClient pbbmsrvconnect.BlockClient
 	var apiKey string
-
-	client := &http.Client{Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: sflags.MustGetBool(cmd, "follow-head-insecure")},
-	}}
-
 	if blockmetaUrl != "" {
-		blockmetaClient = pbbmsrvconnect.NewBlockClient(client, blockmetaUrl)
+		blockmetaClient = pbbmsrvconnect.NewBlockClient(http.DefaultClient, blockmetaUrl)
 		apiKey = os.Getenv("SUBSTREAMS_API_KEY")
 		if apiKey == "" {
 			return fmt.Errorf("missing SUBSTREAMS_API_KEY environment variable to use blockmeta service")
