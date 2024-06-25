@@ -6,7 +6,6 @@ on:
       - "*"
     branches:
       - develop
-      - feature/*
 
 env:
   REGISTRY: ghcr.io

@@ -64,6 +64,7 @@ func (s *StateStore) Read() (cursor string, block bstream.BlockRef, err error) {
 	s.state.LastSyncedAt = s.state.LastSyncedAt.Local()
 	s.state.BackprocessingCompletedAt = s.state.BackprocessingCompletedAt.Local()
 	s.state.HeadBlockReachedAt = s.state.HeadBlockReachedAt.Local()
+
 	return s.state.Cursor, bstream.NewBlockRef(s.state.Block.ID, s.state.Block.Number), nil
 }
 
