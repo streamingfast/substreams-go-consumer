@@ -12,7 +12,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v1.15.0
 	github.com/streamingfast/blockmeta-service/server v0.0.0-20240305210209-2f971e09cdef
-	github.com/streamingfast/bstream v0.0.2-0.20240603153252-ec8d37625188
+	github.com/streamingfast/bstream v0.0.2-0.20240228193450-5200ecab8050
 	github.com/streamingfast/cli v0.0.4-0.20230825151644-8cc84512cd80
 	github.com/streamingfast/derr v0.0.0-20230515163924-8570aaa43fe1
 	github.com/streamingfast/dgrpc v0.0.0-20240219152146-57bb131c39ca
@@ -20,12 +20,12 @@ require (
 	github.com/streamingfast/logging v0.0.0-20230608130331-f22c91403091
 	github.com/streamingfast/pbgo v0.0.6-0.20231120172814-537d034aad5e
 	github.com/streamingfast/shutter v1.5.0
-	github.com/streamingfast/substreams v1.7.3
-	github.com/streamingfast/substreams-sink v0.4.0
+	github.com/streamingfast/substreams v1.5.7-0.20240508154716-3324533d6475
+	github.com/streamingfast/substreams-sink v0.3.6-0.20240508173955-de7509f6e52e
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.49.0
 	go.uber.org/zap v1.26.0
 	golang.org/x/oauth2 v0.18.0
-	google.golang.org/grpc v1.64.0
+	google.golang.org/grpc v1.63.2
 	google.golang.org/protobuf v1.33.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -33,8 +33,8 @@ require (
 require (
 	buf.build/gen/go/bufbuild/reflect/connectrpc/go v1.16.1-20240117202343-bf8f65e8876c.1 // indirect
 	buf.build/gen/go/bufbuild/reflect/protocolbuffers/go v1.33.0-20240117202343-bf8f65e8876c.1 // indirect
-	cloud.google.com/go v0.112.1 // indirect
-	cloud.google.com/go/compute v1.25.1 // indirect
+	cloud.google.com/go v0.112.0 // indirect
+	cloud.google.com/go/compute v1.24.0 // indirect
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
 	cloud.google.com/go/iam v1.1.6 // indirect
 	cloud.google.com/go/storage v1.38.0 // indirect
@@ -51,7 +51,7 @@ require (
 	github.com/census-instrumentation/opencensus-proto v0.4.1 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/chzyer/readline v1.5.0 // indirect
-	github.com/cncf/xds/go v0.0.0-20240318125728-8a4994d93e50 // indirect
+	github.com/cncf/xds/go v0.0.0-20231128003011-0fa0005c9caa // indirect
 	github.com/crackcomm/go-gitignore v0.0.0-20170627025303-887ab5e44cc3 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.1.0 // indirect
@@ -139,7 +139,7 @@ require (
 	google.golang.org/api v0.172.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/genproto v0.0.0-20240227224415-6ceb2ff114de // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20240318140521-94a12d6c2237 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20240311132316-a219d84964c2 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240318140521-94a12d6c2237 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
