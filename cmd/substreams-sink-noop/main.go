@@ -48,7 +48,7 @@ func main() {
 			if zlog.Core().Enabled(zap.DebugLevel) {
 				frequencyDefault = 5 * time.Second
 			}
-
+			flags.Duration("startup-delay", 0, "Delay before starting to consume the stream")
 			flags.BoolP("clean", "c", false, "Do not read existing state from cursor state file and start from scratch instead")
 			flags.DurationP("frequency", "f", frequencyDefault, "At which interval of time we should print statistics locally extracted from Prometheus")
 			flags.String("state-store", "./state.yaml", "Output path where to store latest received cursor, if empty, cursor will not be persisted")
@@ -92,6 +92,7 @@ func run(cmd *cobra.Command, args []string) error {
 		sinker.outputDataHash = newDataHasher(outputInterval)
 	}
 
+	startUpDelay := sflags.MustGetDuration(cmd, "startup-delay")
 	apiListenAddr := sflags.MustGetString(cmd, "api-listen-addr")
 	cleanState := sflags.MustGetBool(cmd, "clean")
 	stateStorePath := sflags.MustGetString(cmd, "state-store")
@@ -105,6 +106,11 @@ func run(cmd *cobra.Command, args []string) error {
 		zap.String("cursor_store_path", stateStorePath),
 		zap.String("manage_listen_addr", apiListenAddr),
 	)
+
+	if startUpDelay > 0 {
+		zlog.Info("sleeping before starting", zap.Duration("duration", startUpDelay))
+		time.Sleep(startUpDelay)
+	}
 
 	headTrackerClient, headTrackerConnClose, headTrackerCallOpts, headTrackerHeaders, err := client.NewSubstreamsClient(sinker.ClientConfig())
 	cli.NoError(err, "Unable to create head tracker client")
