@@ -77,6 +77,13 @@ func run(cmd *cobra.Command, args []string) error {
 		cancelApp()
 	})
 
+	// The startup delay should be performed before any other initialization otherwise
+	// sometimes you cannot fix some errors that are happening in `sink.NewFromViper`.
+	if startUpDelay := sflags.MustGetDuration(cmd, "startup-delay"); startUpDelay > 0 {
+		zlog.Info("sleeping before starting", zap.Duration("duration", startUpDelay))
+		time.Sleep(startUpDelay)
+	}
+
 	endpoint := args[0]
 	manifestPath := args[1]
 	moduleName := args[2]
@@ -96,7 +103,6 @@ func run(cmd *cobra.Command, args []string) error {
 		sinker.outputDataHash = newDataHasher(outputInterval)
 	}
 
-	startUpDelay := sflags.MustGetDuration(cmd, "startup-delay")
 	apiListenAddr := sflags.MustGetString(cmd, "api-listen-addr")
 	cleanState := sflags.MustGetBool(cmd, "clean")
 	stateStorePath := sflags.MustGetString(cmd, "state-store")
@@ -110,11 +116,6 @@ func run(cmd *cobra.Command, args []string) error {
 		zap.String("cursor_store_path", stateStorePath),
 		zap.String("manage_listen_addr", apiListenAddr),
 	)
-
-	if startUpDelay > 0 {
-		zlog.Info("sleeping before starting", zap.Duration("duration", startUpDelay))
-		time.Sleep(startUpDelay)
-	}
 
 	headTrackerClient, headTrackerConnClose, headTrackerCallOpts, headTrackerHeaders, err := client.NewSubstreamsClient(sinker.ClientConfig())
 	cli.NoError(err, "Unable to create head tracker client")
