@@ -22,6 +22,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// Version value, injected via go build `ldflags` at build time
+var version = "dev"
+
 var zlog, tracer = logging.ApplicationLogger("sink-noop", "github.com/streamingfast/substreams-sink-noop",
 	logging.WithConsoleToStderr(),
 )
@@ -40,6 +43,7 @@ func main() {
 			substreams-sink-noop mainnet.eth.streamingfast.io:443 ethereum-network-v1-v0.1.0.spkg graph_out +1000
 		`),
 		ConfigureViper("SINK_NOOP"),
+		ConfigureVersion(version),
 		RangeArgs(3, 4),
 		Flags(func(flags *pflag.FlagSet) {
 			sink.AddFlagsToSet(flags, sink.FlagIgnore(sink.FlagIrreversibleOnly))
