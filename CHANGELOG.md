@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+### Unreleased
+
+* Bump substreams version to allow sink noop to send requests with up to 300 mb
+
 ## v1.3.1
 
 - Move startup delay handling much higher in the initialization so that it happens before anything else.
