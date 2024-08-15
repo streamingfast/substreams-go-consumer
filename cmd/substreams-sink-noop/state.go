@@ -106,13 +106,14 @@ func (s *StateStore) Start(each time.Duration) {
 }
 
 func (s *StateStore) SyncNow() error {
-	zlog.Debug("saving cursor to output path", zap.String("output_path", s.outputPath))
 	cursor, backprocessCompleted, headBlockReached := s.fetcher()
 
 	s.state.Cursor = cursor.String()
 	s.state.Block.ID = cursor.Block().ID()
 	s.state.Block.Number = cursor.Block().Num()
 	s.state.LastSyncedAt = time.Now().Local()
+
+	zlog.Info("saving cursor to output path", zap.String("output_path", s.outputPath), zap.Uint64("block_num", s.state.Block.Number), zap.String("block_id", s.state.Block.ID), zap.String("cursor", s.state.Cursor))
 
 	if backprocessCompleted && s.state.BackprocessingCompletedAt.IsZero() {
 		s.state.BackprocessingCompletedAt = s.state.LastSyncedAt
