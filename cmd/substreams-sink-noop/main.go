@@ -222,9 +222,7 @@ func (s *Sinker) Run(ctx context.Context) {
 }
 
 func (s *Sinker) HandleBlockScopedData(ctx context.Context, data *pbsubstreamsrpc.BlockScopedData, isLive *bool, cursor *sink.Cursor) error {
-	if tracer.Enabled() {
-		zlog.Debug("data message received", zap.Reflect("data", data))
-	}
+	zlog.Debug("data message received", zap.Reflect("data", data))
 
 	block := bstream.NewBlockRef(data.Clock.Id, data.Clock.Number)
 	ProcessedBlockCount.Inc()
