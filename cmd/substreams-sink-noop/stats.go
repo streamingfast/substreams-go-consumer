@@ -1,34 +1,39 @@
 package main
 
 import (
-	"strconv"
 	"time"
 
-	"github.com/streamingfast/bstream"
+	sink "github.com/streamingfast/substreams-sink"
+
 	"github.com/streamingfast/dmetrics"
 	"github.com/streamingfast/shutter"
 	"go.uber.org/zap"
 )
 
+var ProcessedBlockCount = metrics.NewGauge("processed_block_count", "The number of processed block")
+
 type Stats struct {
 	*shutter.Shutter
 
 	headFetcher *HeadTracker
-	lastBlock   bstream.BlockRef
 	stopBlock   uint64
+
+	processedBlockRate *dmetrics.AvgRatePromGauge
 
 	backprocessingCompletion *dmetrics.ValueFromMetric
 	headBlockReached         *dmetrics.ValueFromMetric
+	fetchCursor              func() *sink.Cursor
 }
 
-func NewStats(stopBlock uint64, headFetcher *HeadTracker) *Stats {
+func NewStats(stopBlock uint64, headFetcher *HeadTracker, fetchCursor func() *sink.Cursor) *Stats {
 	return &Stats{
-		Shutter:   shutter.New(),
-		stopBlock: stopBlock,
-
+		Shutter:                  shutter.New(),
+		stopBlock:                stopBlock,
+		fetchCursor:              fetchCursor,
 		headFetcher:              headFetcher,
 		backprocessingCompletion: dmetrics.NewValueFromMetric(BackprocessingCompletion, "completion"),
 		headBlockReached:         dmetrics.NewValueFromMetric(HeadBlockReached, "reached"),
+		processedBlockRate:       dmetrics.MustNewAvgRateFromPromGauge(ProcessedBlockCount, 1*time.Second, 30*time.Second, "processed_block_sec"),
 	}
 }
 
@@ -60,27 +65,17 @@ func (s *Stats) LogNow() {
 	fields := []zap.Field{}
 	headBlock, headBlockFound := s.headFetcher.Current()
 
-	if s.lastBlock != nil {
-		toBlockNum := s.stopBlock
-		if s.stopBlock == 0 && headBlockFound {
-			toBlockNum = headBlock.Num()
-		}
-
-		var blockDiff = "<N/A>"
-		if toBlockNum > s.lastBlock.Num() {
-			blockDiff = strconv.FormatUint(toBlockNum-s.lastBlock.Num(), 10)
-		}
-
-		fields = append(fields, zap.String("missing_block", blockDiff))
-	}
+	cursor := s.fetchCursor()
 
 	if headBlockFound {
 		fields = append(fields, zap.Stringer("head_block", headBlock))
 	}
 
 	fields = append(fields,
-		zap.Bool("backprocessing_completed", s.backprocessingCompletion.ValueUint() > 0),
+		zap.String("last_cursor", cursor.Block().String()),
+		zap.Bool("back_processing_completed", s.backprocessingCompletion.ValueUint() > 0),
 		zap.Bool("head_block_reached", s.headBlockReached.ValueUint() > 0),
+		zap.Float64("avg_blocks_sec", s.processedBlockRate.Rate()),
 	)
 
 	zlog.Info("substreams sink noop stats", fields...)

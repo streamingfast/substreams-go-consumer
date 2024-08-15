@@ -132,7 +132,9 @@ func run(cmd *cobra.Command, args []string) error {
 		stopBlock = *blockRange.EndBlock()
 	}
 
-	stats := NewStats(stopBlock, headFetcher)
+	stats := NewStats(stopBlock, headFetcher, func() *sink.Cursor {
+		return sinker.activeCursor
+	})
 	app.OnTerminating(func(_ error) { stats.Close() })
 	stats.OnTerminated(func(err error) { app.Shutdown(err) })
 
@@ -225,7 +227,7 @@ func (s *Sinker) HandleBlockScopedData(ctx context.Context, data *pbsubstreamsrp
 	}
 
 	block := bstream.NewBlockRef(data.Clock.Id, data.Clock.Number)
-
+	ProcessedBlockCount.Inc()
 	s.activeCursor = cursor
 	s.backprocessingCompleted = true
 
