@@ -40,7 +40,8 @@ func main() {
 			The <endpoint> argument must always have its port defined.
 		`),
 		Example(`
-			substreams-sink-noop mainnet.eth.streamingfast.io:443 ethereum-network-v1-v0.1.0.spkg graph_out +1000
+			substreams-sink-noop mainnet.eth.streamingfast.io:443 ethereum-network-v1-v0.1.0.spkg graph_out +10000
+			substreams-sink-noop mainnet.eth.streamingfast.io:443 uniswap-v3@v0.2.10 graph_out +10000
 		`),
 		ConfigureViper("SINK_NOOP"),
 		ConfigureVersion(version),
